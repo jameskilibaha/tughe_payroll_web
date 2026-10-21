@@ -9,8 +9,12 @@ import 'controllers/allowances_settings_controller.dart';
 import 'controllers/salary_terms_controller.dart';
 import 'controllers/user_management_controller.dart';
 import 'controllers/audit_controller.dart';
+import 'controllers/chat_controller.dart';
+import 'controllers/statutory_controller.dart';
 import 'controllers/navigation_controller.dart';
+import 'controllers/month_payroll_controller.dart';
 import 'controllers/payroll_controller.dart';
+import 'controllers/payroll_trend_controller.dart';
 import 'core/theme.dart';
 import 'core/i18n.dart';
 import 'network/api_service.dart';
@@ -36,7 +40,11 @@ void main() {
   Get.put(SalaryTermsController(apiService: apiService), permanent: true);
   Get.put(UserManagementController(apiService: apiService), permanent: true);
   Get.put(AuditController(apiService: apiService), permanent: true);
+  Get.put(ChatController(apiService: apiService), permanent: true); // live chat with the employees
+  Get.put(StatutoryController(apiService: apiService), permanent: true); // statutory rates, reports, adjustments
   Get.put(PayrollController(apiService: apiService), permanent: true);
+  Get.put(MonthPayrollController(apiService: apiService), permanent: true);
+  Get.put(PayrollTrendController(apiService: apiService), permanent: true);
   Get.put(NavigationController(), permanent: true);
 
   runApp(const TughePayrollApp());
@@ -75,11 +83,16 @@ class _AuthGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = Get.find<AuthController>();
+    // Rebuild the whole app shell when the language changes so that every
+    // screen (including text fields' labels/hints that are not widgets of
+    // their own) picks up the new language immediately.
+    final isEn = context.watch<LocaleProvider>().isEnglish;
+    final isDark = context.watch<ThemeProvider>().isDark;
     return Obx(() {
       if (auth.isLoading.value) {
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
       }
-      return auth.isLoggedIn ? const HomeShell() : const LoginScreen();
+      return auth.isLoggedIn ? HomeShell(key: ValueKey('$isEn-$isDark')) : const LoginScreen();
     });
   }
 }

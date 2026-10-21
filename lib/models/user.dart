@@ -1,5 +1,5 @@
 /// Plain immutable model (no code generation required).
-/// role: 'Msimamizi' | 'Mhasibu Mkuu' | 'Afisa Utumishi'
+/// role: 'Admin' | 'Accountant' | 'User'
 /// status: 'Active' | 'Blocked'
 class User {
   const User({
@@ -92,7 +92,7 @@ class User {
         id: json['id'] as String,
         name: json['name'] as String? ?? '',
         email: json['email'] as String? ?? '',
-        role: json['role'] as String? ?? 'Afisa Utumishi',
+        role: json['role'] as String? ?? '',
         designation: json['designation'] as String? ?? '',
         avatarInitials: json['avatarInitials'] as String? ?? '',
         status: json['status'] as String? ?? 'Active',
@@ -144,7 +144,10 @@ class User {
       id: 'USR-$id',
       name: fullName.isEmpty ? (previous?.name ?? '') : fullName,
       email: previous?.email ?? '',
-      role: previous?.role ?? 'Mtumiaji',
+      // The server decides the role from the user's permissions.
+      // Empty = the server did not say (an older server): the screens then do not hide anything,
+      // the server itself still enforces every permission.
+      role: (json['role'] as String?) ?? previous?.role ?? '',
       designation: previous?.designation ?? '',
       avatarInitials: previous?.avatarInitials ?? initials,
       status: isBlocked ? 'Blocked' : 'Active',

@@ -11,7 +11,10 @@ class NavigationController extends GetxController {
   final RxString searchQuery = ''.obs;
   final Rxn<Employee> selectedEmployeeForSlip = Rxn<Employee>();
 
-  void goTo(String tab) => activeTab.value = tab;
+  /// The old separate pages "Hali ya Mshahara", "Makato" and "Nyongeza" are now part of the one employees page.
+  static const _merged = {'salary_status', 'arrears', 'allowances'};
+
+  void goTo(String tab) => activeTab.value = _merged.contains(tab) ? 'registration' : tab;
 
   void goToPayslip(Employee employee) {
     selectedEmployeeForSlip.value = employee;

@@ -1,11 +1,17 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
 
 import '../../controllers/employee_controller.dart';
 import '../../models/employee.dart';
+import '../../core/tr_text.dart';
+import '../../core/translations.dart';
+import 'form_kit.dart';
+import 'modal_header_banner.dart';
 
-const _brandBlue = Color(0xFF1E3A8A);
+const _blue900 = Color(0xFF1E3A8A);
+const _indigo900 = Color(0xFF312E81);
 
+/// Register a new employee / edit an existing one.
 class EmployeeFormDialog extends StatefulWidget {
   const EmployeeFormDialog({super.key, this.existing});
 
@@ -31,9 +37,16 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
 
   String _gender = 'Male';
   String _maritalStatus = 'Single';
+
+  /// Message shown on top of the form, and the message of each wrong field (by key).
   String _errorMsg = '';
+  final Map<String, String> _errors = {};
+  bool _isSaving = false;
 
   bool get _isEditing => widget.existing != null;
+
+  static const _genders = ['Male', 'Female'];
+  static const _maritalStatuses = ['Single', 'Married', 'Divorced', 'Widowed'];
 
   @override
   void initState() {
@@ -46,9 +59,9 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     _districtCtrl = TextEditingController(text: e?.residentialDistrict ?? '');
     _mobileCtrl = TextEditingController(text: e?.mobileNumber ?? '');
     _emailCtrl = TextEditingController(text: e?.email ?? '');
-    _dobCtrl = TextEditingController(text: e?.dateOfBirth ?? '1992-05-15');
-    _doeCtrl = TextEditingController(
-        text: e?.dateOfEmployment ?? DateTime.now().toIso8601String().substring(0, 10));
+    // The date of birth decides the retirement date: it must be chosen, never silently defaulted.
+    _dobCtrl = TextEditingController(text: e?.dateOfBirth ?? '');
+    _doeCtrl = TextEditingController(text: e?.dateOfEmployment ?? DateTime.now().toIso8601String().substring(0, 10));
     _nationalityCtrl = TextEditingController(text: e?.nationality ?? 'Mtanzania');
     _gender = e?.gender ?? 'Male';
     _maritalStatus = e?.maritalStatus ?? 'Single';
@@ -65,36 +78,69 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     super.dispose();
   }
 
-  bool _isSaving = false;
+  void _clear(String key) {
+    if (_errors.containsKey(key)) setState(() => _errors.remove(key));
+  }
+
+  String _t(TextEditingController c) => c.text.trim();
+
+  /// Checks every field; each wrong one shows its own message in red.
+  bool _validate() {
+    final e = <String, String>{};
+    if (_t(_idCtrl).isEmpty) e['id'] = 'Weka namba ya mfanyakazi.';
+    if (_t(_firstNameCtrl).isEmpty) e['first'] = 'Weka jina la kwanza.';
+    if (_t(_lastNameCtrl).isEmpty) e['last'] = 'Weka jina la mwisho.';
+    final email = _t(_emailCtrl);
+    if (email.isEmpty) {
+      e['email'] = 'Weka barua pepe (ndiyo jina la kuingia).';
+    } else if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+      e['email'] = 'Barua pepe si sahihi (mfano: jina@mfano.com).';
+    }
+    if (_t(_mobileCtrl).isEmpty) e['mobile'] = 'Weka namba ya simu.';
+    if (_t(_districtCtrl).isEmpty) e['district'] = 'Weka wilaya ya makazi.';
+    if (_t(_nationalityCtrl).isEmpty) e['nationality'] = 'Weka uraia.';
+    final dob = DateTime.tryParse(_t(_dobCtrl));
+    if (dob == null) {
+      e['dob'] = 'Chagua tarehe ya kuzaliwa.';
+    } else if (dob.isAfter(DateTime.now())) {
+      e['dob'] = 'Tarehe ya kuzaliwa haiwezi kuwa ya baadaye.';
+    }
+    if (DateTime.tryParse(_t(_doeCtrl)) == null) e['doe'] = 'Chagua tarehe ya kuajiriwa.';
+
+    setState(() {
+      _errors
+        ..clear()
+        ..addAll(e);
+      _errorMsg = e.isEmpty ? '' : 'Rekebisha sehemu zilizoandikwa kwa rangi nyekundu, kisha jaribu tena.';
+    });
+    return e.isEmpty;
+  }
 
   Future<void> _submit() async {
-    setState(() => _errorMsg = '');
-    if (_idCtrl.text.trim().isEmpty || _firstNameCtrl.text.trim().isEmpty || _lastNameCtrl.text.trim().isEmpty) {
-      setState(() => _errorMsg = 'Tafadhali jaza Namba ya Wafanyakazi, Jina la Kwanza na Jina la Mwisho.');
-      return;
-    }
+    if (!_validate()) return;
 
     setState(() => _isSaving = true);
     if (_isEditing) {
       final updated = widget.existing!.copyWith(
-        firstName: _firstNameCtrl.text.trim(),
-        middleName: _middleNameCtrl.text.trim(),
-        lastName: _lastNameCtrl.text.trim(),
+        firstName: _t(_firstNameCtrl),
+        middleName: _t(_middleNameCtrl),
+        lastName: _t(_lastNameCtrl),
         gender: _gender,
         maritalStatus: _maritalStatus,
-        nationality: _nationalityCtrl.text.trim(),
-        residentialDistrict: _districtCtrl.text.trim(),
-        mobileNumber: _mobileCtrl.text.trim(),
-        email: _emailCtrl.text.trim(),
-        dateOfBirth: _dobCtrl.text.trim(),
-        dateOfEmployment: _doeCtrl.text.trim(),
+        nationality: _t(_nationalityCtrl),
+        residentialDistrict: _t(_districtCtrl),
+        mobileNumber: _t(_mobileCtrl),
+        email: _t(_emailCtrl),
+        dateOfBirth: _t(_dobCtrl),
+        dateOfEmployment: _t(_doeCtrl),
       );
       await _ctrl.updateEmployee(updated);
     } else {
-      final idTrimmed = _idCtrl.text.trim();
+      final idTrimmed = _t(_idCtrl);
       if (_ctrl.employees.any((e) => e.id.toLowerCase() == idTrimmed.toLowerCase())) {
         setState(() {
-          _errorMsg = 'Namba ya ID $idTrimmed ipo tayari. Tumia ID nyengine.';
+          _errors['id'] = 'Namba ya ID $idTrimmed ipo tayari. Tumia ID nyingine.';
+          _errorMsg = 'Namba ya mfanyakazi imetumika tayari.';
           _isSaving = false;
         });
         return;
@@ -102,125 +148,186 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
       final newEmp = Employee(
         id: idTrimmed,
         employeeIdNumber: idTrimmed,
-        firstName: _firstNameCtrl.text.trim(),
-        middleName: _middleNameCtrl.text.trim(),
-        lastName: _lastNameCtrl.text.trim(),
+        firstName: _t(_firstNameCtrl),
+        middleName: _t(_middleNameCtrl),
+        lastName: _t(_lastNameCtrl),
         gender: _gender,
         maritalStatus: _maritalStatus,
-        nationality: _nationalityCtrl.text.trim(),
-        residentialDistrict: _districtCtrl.text.trim(),
-        mobileNumber: _mobileCtrl.text.trim(),
-        email: _emailCtrl.text.trim(),
-        dateOfBirth: _dobCtrl.text.trim(),
-        dateOfEmployment: _doeCtrl.text.trim(),
+        nationality: _t(_nationalityCtrl),
+        residentialDistrict: _t(_districtCtrl),
+        mobileNumber: _t(_mobileCtrl),
+        email: _t(_emailCtrl),
+        dateOfBirth: _t(_dobCtrl),
+        dateOfEmployment: _t(_doeCtrl),
         status: 'Active',
       );
       await _ctrl.addEmployee(newEmp);
     }
-    if (mounted) Navigator.of(context).pop();
+    // a NEW employee: hand back his number so that the list can open the "complete the registration" steps
+    if (mounted) Navigator.of(context).pop(_isEditing ? null : _t(_idCtrl)); 
   }
+
+  String _genderLabel(String v) => v == 'Male' ? 'Mwanamume (Male)' : 'Mwanamke (Female)';
+
+  String _maritalLabel(String v) => switch (v) {
+        'Married' => 'Ameoa / Ameolewa (Married)',
+        'Divorced' => 'Ametalikiana (Divorced)',
+        'Widowed' => 'Mjane / Mgane (Widowed)',
+        _ => 'Hajaoa / Hajaolewa (Single)',
+      };
 
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      insetPadding: const EdgeInsets.all(16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(_isEditing ? 'Hariri Taarifa za Mfanyakazi' : 'Sajili Mfanyakazi Mpya',
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: _brandBlue)),
-                const SizedBox(height: 12),
-                if (_errorMsg.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    margin: const EdgeInsets.only(bottom: 10),
-                    decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8)),
-                    child: Text(_errorMsg, style: TextStyle(color: Colors.red.shade800, fontSize: 11)),
-                  ),
-                Row(children: [
-                  Expanded(child: _field('Namba ya Mfanyakazi (ID)', _idCtrl, enabled: !_isEditing)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _field('Tarehe ya Kuajiriwa', _doeCtrl)),
-                ]),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(child: _field('Jina la Kwanza', _firstNameCtrl)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _field('Jina la Kati', _middleNameCtrl)),
-                ]),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(child: _field('Jina la Mwisho', _lastNameCtrl)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _field('Tarehe ya Kuzaliwa', _dobCtrl)),
-                ]),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(
-                    child: _dropdown('Jinsia', _gender, const ['Male', 'Female'], (v) => setState(() => _gender = v!)),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _dropdown('Hali ya Ndoa', _maritalStatus,
-                        const ['Single', 'Married', 'Divorced', 'Widowed'], (v) => setState(() => _maritalStatus = v!)),
-                  ),
-                ]),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(child: _field('Uraia (Nationality)', _nationalityCtrl)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _field('Wilaya ya Makazi', _districtCtrl)),
-                ]),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(child: _field('Namba ya Simu', _mobileCtrl)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _field('Barua Pepe', _emailCtrl)),
-                ]),
-                const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+        constraints: BoxConstraints(maxWidth: 700, maxHeight: MediaQuery.of(context).size.height * 0.92),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ModalHeaderBanner(
+              icon: _isEditing ? Icons.edit_outlined : Icons.person_add_alt_1,
+              title: _isEditing ? 'Hariri Taarifa za Mfanyakazi' : 'Sajili Mfanyakazi Mpya',
+              subtitle: 'Jaza taarifa za mfanyakazi. Sehemu zenye * ni lazima.',
+              gradientColors: const [_blue900, _indigo900],
+              iconColor: Colors.white,
+              subtitleColor: Colors.blue.shade100,
+              onClose: _isSaving ? null : () => Navigator.of(context).pop(),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(22, 18, 22, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    TextButton(onPressed: _isSaving ? null : () => Navigator.of(context).pop(), child: const Text('Ghairi')),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                      onPressed: _isSaving ? null : _submit,
-                      style: ElevatedButton.styleFrom(backgroundColor: _brandBlue, foregroundColor: Colors.white),
-                      child: _isSaving
-                          ? const SizedBox(
-                              width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : Text(_isEditing ? 'Hifadhi Mabadiliko' : 'Sajili Mfanyakazi'),
-                    ),
+                    if (_errorMsg.isNotEmpty) FormNotice(_errorMsg),
+                    const FormSection('Utambulisho', icon: Icons.badge_outlined),
+                    FormGrid(children: [
+                      AppTextField(
+                        label: 'Namba ya Mfanyakazi (ID)',
+                        controller: _idCtrl,
+                        icon: Icons.tag,
+                        required: true,
+                        enabled: !_isEditing,
+                        errorText: _errors['id'],
+                        onChanged: (_) => _clear('id'),
+                      ),
+                      AppDateField(
+                        label: 'Tarehe ya Kuajiriwa',
+                        controller: _doeCtrl,
+                        required: true,
+                        errorText: _errors['doe'],
+                        onPicked: () => _clear('doe'),
+                      ),
+                    ]),
+                    const SizedBox(height: 14),
+                    FormGrid(columns: 3, children: [
+                      AppTextField(
+                        label: 'Jina la Kwanza',
+                        controller: _firstNameCtrl,
+                        required: true,
+                        textCapitalization: TextCapitalization.words,
+                        errorText: _errors['first'],
+                        onChanged: (_) => _clear('first'),
+                      ),
+                      AppTextField(label: 'Jina la Kati', controller: _middleNameCtrl, textCapitalization: TextCapitalization.words),
+                      AppTextField(
+                        label: 'Jina la Mwisho',
+                        controller: _lastNameCtrl,
+                        required: true,
+                        textCapitalization: TextCapitalization.words,
+                        errorText: _errors['last'],
+                        onChanged: (_) => _clear('last'),
+                      ),
+                    ]),
+                    const SizedBox(height: 8),
+                    const FormSection('Taarifa binafsi', icon: Icons.person_outline),
+                    FormGrid(children: [
+                      AppDropdown<String>(
+                        label: 'Jinsia',
+                        value: _gender,
+                        items: _genders,
+                        labelOf: _genderLabel,
+                        onChanged: (v) => setState(() => _gender = v ?? _gender),
+                      ),
+                      AppDropdown<String>(
+                        label: 'Hali ya Ndoa',
+                        value: _maritalStatus,
+                        items: _maritalStatuses,
+                        labelOf: _maritalLabel,
+                        onChanged: (v) => setState(() => _maritalStatus = v ?? _maritalStatus),
+                      ),
+                      AppDateField(
+                        label: 'Tarehe ya Kuzaliwa',
+                        controller: _dobCtrl,
+                        required: true,
+                        errorText: _errors['dob'],
+                        lastDate: DateTime.now(),
+                        onPicked: () => _clear('dob'),
+                      ),
+                      AppTextField(
+                        label: 'Uraia (Nationality)',
+                        controller: _nationalityCtrl,
+                        required: true,
+                        errorText: _errors['nationality'],
+                        onChanged: (_) => _clear('nationality'),
+                      ),
+                    ]),
+                    const SizedBox(height: 8),
+                    const FormSection('Mawasiliano na makazi', icon: Icons.contact_phone_outlined),
+                    FormGrid(children: [
+                      AppTextField(
+                        label: 'Namba ya Simu',
+                        controller: _mobileCtrl,
+                        icon: Icons.phone_outlined,
+                        required: true,
+                        keyboardType: TextInputType.phone,
+                        errorText: _errors['mobile'],
+                        onChanged: (_) => _clear('mobile'),
+                      ),
+                      AppTextField(
+                        label: 'Barua Pepe',
+                        controller: _emailCtrl,
+                        icon: Icons.mail_outline,
+                        required: true,
+                        keyboardType: TextInputType.emailAddress,
+                        helper: _isEditing ? null : 'Ndiyo jina lake la kuingia kwenye app.',
+                        errorText: _errors['email'],
+                        onChanged: (_) => _clear('email'),
+                      ),
+                      AppTextField(
+                        label: 'Wilaya ya Makazi',
+                        controller: _districtCtrl,
+                        icon: Icons.location_on_outlined,
+                        required: true,
+                        textCapitalization: TextCapitalization.words,
+                        errorText: _errors['district'],
+                        onChanged: (_) => _clear('district'),
+                      ),
+                    ]),
+                    if (!_isEditing) ...[
+                      const SizedBox(height: 14),
+                      const FormNotice(
+                        'Akaunti ya kuingia inatengenezwa yenyewe: jina la mtumiaji ni barua pepe yake, na nenosiri la awali ni jina lake la mwisho kwa HERUFI KUBWA.',
+                        kind: NoticeKind.info,
+                      ),
+                    ],
+                    const SizedBox(height: 6),
                   ],
                 ),
-              ],
+              ),
             ),
-          ),
+            FormActions(
+              onCancel: () => Navigator.of(context).pop(),
+              onSubmit: _submit,
+              busy: _isSaving,
+              submitLabel: _isEditing ? 'Hifadhi Mabadiliko' : 'Sajili Mfanyakazi',
+            ),
+          ],
         ),
       ),
-    );
-  }
-
-  Widget _field(String label, TextEditingController ctrl, {bool enabled = true}) {
-    return TextField(
-      controller: ctrl,
-      enabled: enabled,
-      decoration: InputDecoration(labelText: label, labelStyle: const TextStyle(fontSize: 11), isDense: true),
-      style: const TextStyle(fontSize: 12),
-    );
-  }
-
-  Widget _dropdown(String label, String value, List<String> options, ValueChanged<String?> onChanged) {
-    return DropdownButtonFormField<String>(
-      value: value,
-      decoration: InputDecoration(labelText: label, labelStyle: const TextStyle(fontSize: 11), isDense: true),
-      items: options.map((o) => DropdownMenuItem(value: o, child: Text(o, style: const TextStyle(fontSize: 12)))).toList(),
-      onChanged: onChanged,
     );
   }
 }

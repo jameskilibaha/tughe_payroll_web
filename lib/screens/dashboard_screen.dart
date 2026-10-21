@@ -1,17 +1,31 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
 
 import '../controllers/employee_controller.dart';
+import '../controllers/month_payroll_controller.dart';
 import '../controllers/navigation_controller.dart';
+import '../controllers/payroll_trend_controller.dart';
 import '../controllers/salary_terms_controller.dart';
 import '../models/employee.dart';
+import '../models/payroll_calculation_result.dart';
 import '../models/tra_salary_term.dart';
 import '../utils/formatters.dart';
 import '../utils/payroll_calculator.dart';
+import '../utils/salary_slip_from_generated.dart';
 import 'widgets/app_status_views.dart';
+import 'widgets/charts.dart';
+import 'widgets/tughe_logo.dart';
+import 'widgets/full_width_scroll.dart';
+import '../core/tr_text.dart';
+import '../core/theme.dart';
 
 const _brandBlue = Color(0xFF1E3A8A);
 const _slate900 = Color(0xFF0F172A);
+
+const List<String> _dashMonths = [
+  'Januari', 'Februari', 'Machi', 'Aprili', 'Mei', 'Juni',
+  'Julai', 'Agosti', 'Septemba', 'Oktoba', 'Novemba', 'Desemba',
+];
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key, required this.onSelectEmployeeForSlip});
@@ -36,8 +50,28 @@ class DashboardScreen extends StatelessWidget {
       double totalGross = 0, totalAllowances = 0, totalPaye = 0, totalNssf = 0;
       double totalOtherDeductions = 0, totalNet = 0;
 
-      for (final emp in active) {
-        final calc = calculateEmployeePayroll(emp, traTerms: traTerms);
+      // Current month's payroll: when it has been run, the figures below are the
+      // REAL ones from the server; otherwise they are estimates for active staff.
+      final now = DateTime.now();
+      final monthKey = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+      final mp = Get.find<MonthPayrollController>();
+      WidgetsBinding.instance.addPostFrameCallback((_) => mp.load(monthKey));
+      final trend = Get.find<PayrollTrendController>();
+      WidgetsBinding.instance.addPostFrameCallback((_) => trend.load());
+      final monthReady = mp.loadedFor.value == monthKey && !mp.isLoading.value;
+      final processedIds = monthReady ? mp.byEmployee.keys.toSet() : <int>{};
+      final hasActual = processedIds.isNotEmpty;
+
+      final eligible = active.where((e) => e.salaryStatus != null).toList();
+      final withoutStatus = active.where((e) => e.salaryStatus == null).length;
+      final calcList = hasActual
+          ? employees
+              .where((e) => e.backendId != null && processedIds.contains(e.backendId))
+              .map((e) => buildResultFromGeneratedRows(e, mp.byEmployee[e.backendId]!))
+              .toList()
+          : active.map((e) => calculateEmployeePayroll(e, traTerms: traTerms)).toList();
+
+      for (final calc in calcList) {
         totalGross += calc.grossSalary;
         totalAllowances += calc.totalAllowances;
         totalPaye += calc.traPayeTax;
@@ -52,6 +86,17 @@ class DashboardScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _banner(nav),
+            const SizedBox(height: 16),
+            _payrollStatusCard(
+              nav: nav,
+              monthLabel: '${_dashMonths[now.month - 1]} ${now.year}',
+              loading: !monthReady,
+              error: mp.error.value,
+              processed: processedIds.length,
+              eligible: eligible.length,
+              withoutStatus: withoutStatus,
+              blocked: blocked.length,
+            ),
             const SizedBox(height: 20),
             LayoutBuilder(builder: (context, constraints) {
               final isNarrow = constraints.maxWidth < 900;
@@ -59,10 +104,10 @@ class DashboardScreen extends StatelessWidget {
                 _statCard(
                   label: 'WAFANYAKAZI WOTE',
                   value: employees.length.toString(),
-                  valueColor: _brandBlue,
+                  valueColor: Pal.brandText,
                   icon: Icons.groups_outlined,
-                  iconBg: Colors.blue.shade50,
-                  iconColor: _brandBlue,
+                  iconBg: Pal.tint(Colors.blue),
+                  iconColor: Pal.brandText,
                   footer: 'Fungiwa: ${blocked.length}',
                   footerAction: ('Orodha', () => nav.goTo('registration')),
                   trailing: '${active.length} Hai',
@@ -70,29 +115,29 @@ class DashboardScreen extends StatelessWidget {
                 _statCard(
                   label: 'NET PAY (MSHAHARA SAFI)',
                   value: formatTZS(totalNet),
-                  valueColor: _slate900,
+                  valueColor: Pal.text,
                   icon: Icons.account_balance_wallet_outlined,
-                  iconBg: Colors.green.shade50,
-                  iconColor: Colors.green.shade700,
-                  footer: 'Ghafi: ${formatTZS(totalGross)}',
+                  iconBg: Pal.tint(Colors.green),
+                  iconColor: Pal.fg(Colors.green.shade700),
+                  footer: 'Ghafi: ${formatTZS(totalGross)} • ${hasActual ? 'halisi' : 'makadirio'}',
                 ),
                 _statCard(
                   label: 'KODI YA TRA (PAYE)',
                   value: formatTZS(totalPaye),
-                  valueColor: Colors.purple.shade900,
+                  valueColor: Pal.fg(Colors.purple.shade900),
                   icon: Icons.calculate_outlined,
-                  iconBg: Colors.purple.shade50,
-                  iconColor: Colors.purple.shade800,
+                  iconBg: Pal.tint(Colors.purple),
+                  iconColor: Pal.fg(Colors.purple.shade800),
                   footer: 'NSSF/PSSSF: ${formatTZS(totalNssf)}',
                   footerAction: ('Fomula', () => nav.goTo('settings_salary_terms')),
                 ),
                 _statCard(
                   label: 'POSHO NA MAKATO',
                   value: formatTZS(totalAllowances),
-                  valueColor: Colors.amber.shade800,
+                  valueColor: Pal.fg(Colors.amber.shade800),
                   icon: Icons.card_giftcard,
-                  iconBg: Colors.amber.shade50,
-                  iconColor: Colors.amber.shade800,
+                  iconBg: Pal.tint(Colors.amber),
+                  iconColor: Pal.fg(Colors.amber.shade800),
                   footer: 'Arrears: ${formatTZS(totalOtherDeductions)}',
                   footerAction: ('Simamia', () => nav.goTo('allowances')),
                 ),
@@ -126,6 +171,14 @@ class DashboardScreen extends StatelessWidget {
               );
             }),
             const SizedBox(height: 24),
+            _chartsSection(
+              calcList: calcList,
+              hasActual: hasActual,
+              employees: employees.toList(),
+              active: active,
+              trend: trend,
+            ),
+            const SizedBox(height: 24),
             LayoutBuilder(builder: (context, constraints) {
               final isNarrow = constraints.maxWidth < 900;
               final table = _employeeTable(employees.take(5).toList(), traTerms, nav);
@@ -133,21 +186,311 @@ class DashboardScreen extends StatelessWidget {
               if (isNarrow) {
                 return Column(children: [table, const SizedBox(height: 16), panel]);
               }
-              return IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(flex: 2, child: table),
-                    const SizedBox(width: 16),
-                    Expanded(flex: 1, child: panel),
-                  ],
-                ),
+              // No IntrinsicHeight here: the table uses a LayoutBuilder (to fill the
+              // whole card width) which cannot be measured intrinsically.
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 2, child: table),
+                  const SizedBox(width: 16),
+                  Expanded(flex: 1, child: panel),
+                ],
               );
             }),
           ],
         ),
       );
     });
+  }
+
+  /// Where this month's payroll stands, plus things that need attention.
+  // ---------------------------------------------------------------------
+  // Charts
+  // ---------------------------------------------------------------------
+
+  // A getter (not const): the first colour follows the light/dark theme.
+  static List<Color> get _palette => [
+    Pal.chartBlue, Color(0xFF7C3AED), Color(0xFF059669), Color(0xFFD97706),
+    Color(0xFFDC2626), Color(0xFF0891B2), Color(0xFFDB2777), Color(0xFF65A30D),
+  ];
+
+  /// name -> total, biggest first, at most [top] entries (the rest grouped as "Nyingine").
+  List<ChartSlice> _rank(Map<String, double> totals, {int top = 5}) {
+    final entries = totals.entries.where((e) => e.value > 0).toList()..sort((a, b) => b.value.compareTo(a.value));
+    final out = <ChartSlice>[];
+    for (var i = 0; i < entries.length && i < top; i++) {
+      out.add(ChartSlice(entries[i].key, entries[i].value, _palette[i % _palette.length]));
+    }
+    final rest = entries.skip(top).fold<double>(0, (s, e) => s + e.value);
+    if (rest > 0) out.add(ChartSlice('Nyingine', rest, Colors.blueGrey.shade300));
+    return out;
+  }
+
+  Widget _chartsSection({
+    required List<PayrollCalculationResult> calcList,
+    required bool hasActual,
+    required List<Employee> employees,
+    required List<Employee> active,
+    required PayrollTrendController trend,
+  }) {
+    // ---- this month: where the gross salary goes ----
+    double gross = 0, net = 0, paye = 0, nssf = 0, other = 0;
+    final allowanceTotals = <String, double>{};
+    final arrearTotals = <String, double>{};
+    for (final c in calcList) {
+      gross += c.grossSalary;
+      net += c.netSalary;
+      paye += c.traPayeTax;
+      nssf += c.nssfDeduction;
+      other += c.totalOtherDeductions;
+      for (final a in c.allowanceDetails) {
+        allowanceTotals[a.name] = (allowanceTotals[a.name] ?? 0) + a.amount;
+      }
+      for (final a in c.arrearsDetails) {
+        arrearTotals[a.name] = (arrearTotals[a.name] ?? 0) + a.amount;
+      }
+    }
+    final sourceNote = hasActual ? 'Payroll halisi ya mwezi huu' : 'Makadirio (payroll ya mwezi huu bado haijaendeshwa)';
+
+    // ---- staff ----
+    final blockedCount = employees.where((e) => e.status == 'Blocked').length;
+    final activeNoStatus = active.where((e) => e.salaryStatus == null).length;
+    final activeWithStatus = active.length - activeNoStatus;
+
+    final genderCounts = <String, double>{};
+    for (final e in active) {
+      final g = e.gender.isEmpty ? '-' : e.gender;
+      genderCounts[g] = (genderCounts[g] ?? 0) + 1;
+    }
+    Color genderColor(String g) {
+      final l = g.toLowerCase();
+      if (l.startsWith('m') || l.startsWith('k') && l.contains('ume')) return const Color(0xFF1E3A8A);
+      if (l.startsWith('f') || l.contains('ke')) return const Color(0xFFDB2777);
+      return Colors.blueGrey;
+    }
+
+    final stationCounts = <String, double>{};
+    for (final e in active) {
+      final st = e.salaryStatus?.workStation.trim() ?? '';
+      if (st.isEmpty) continue;
+      stationCounts[st] = (stationCounts[st] ?? 0) + 1;
+    }
+
+    // basic salary bands
+    const bands = <(String, double, double)>[
+      ('< 500K', 0, 500000),
+      ('500K-1M', 500000, 1000000),
+      ('1M-2M', 1000000, 2000000),
+      ('2M-3M', 2000000, 3000000),
+      ('> 3M', 3000000, double.infinity),
+    ];
+    final bandItems = <ColumnItem>[
+      for (final b in bands)
+        ColumnItem(
+          b.$1,
+          active.where((e) {
+            final basic = e.salaryStatus?.basicSalary;
+            return basic != null && basic >= b.$2 && basic < b.$3;
+          }).length.toDouble(),
+          tooltip: '${b.$1}',
+        ),
+    ];
+
+    // ---- last 6 months ----
+    final trendItems = trend.months
+        .map((m) => ColumnItem(
+              shortMonth(m.month),
+              m.net,
+              tooltip: '${m.monthYear}\nNet: ${formatTZS(m.net)}\nGhafi: ${formatTZS(m.gross)}\nPAYE: ${formatTZS(m.paye)}\nNSSF: ${formatTZS(m.nssf)}\nWafanyakazi: ${m.employees}',
+            ))
+        .toList();
+    final trendHasData = trend.months.any((m) => m.net > 0);
+
+    final cards = <Widget>[
+      ChartCard(
+        title: 'Mgawanyo wa Mshahara Ghafi (mwezi huu)',
+        subtitle: sourceNote,
+        child: DonutChart(
+          centerTop: formatAmount(gross),
+          centerBottom: 'Ghafi',
+          slices: [
+            ChartSlice('Mshahara Safi (Net)', net, const Color(0xFF059669)),
+            ChartSlice('Kodi ya TRA (PAYE)', paye, const Color(0xFF7C3AED)),
+            ChartSlice('NSSF', nssf, Pal.chartBlue),
+            ChartSlice('Makato Mengine', other, const Color(0xFFD97706)),
+          ],
+        ),
+      ),
+      ChartCard(
+        title: 'Mwenendo wa Mshahara Safi (Miezi 6)',
+        subtitle: 'Jumla ya Net Pay ya kila mwezi (payroll zilizoendeshwa)',
+        child: trend.isLoading.value && trend.months.isEmpty
+            ? const Padding(padding: EdgeInsets.symmetric(vertical: 30), child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+            : trend.error.value.isNotEmpty
+                ? EmptyChart(message: trend.error.value)
+                : trendHasData
+                    ? ColumnChart(items: trendItems, color: Pal.chartBlue)
+                    : const EmptyChart(message: 'Hakuna payroll iliyoendeshwa katika miezi 6 iliyopita.'),
+      ),
+      ChartCard(
+        title: 'Hali ya Wafanyakazi',
+        subtitle: 'Wafanyakazi ${employees.length} kwa jumla',
+        child: DonutChart(
+          centerTop: '${employees.length}',
+          centerBottom: 'Wafanyakazi',
+          valueFormat: (v) => v.toStringAsFixed(0),
+          slices: [
+            ChartSlice('Hai na wana Hali ya Mshahara', activeWithStatus.toDouble(), const Color(0xFF059669)),
+            ChartSlice('Hai bila Hali ya Mshahara', activeNoStatus.toDouble(), const Color(0xFFD97706)),
+            ChartSlice('Waliofungiwa', blockedCount.toDouble(), const Color(0xFFDC2626)),
+          ],
+        ),
+      ),
+      ChartCard(
+        title: 'Wafanyakazi kwa Jinsia',
+        child: DonutChart(
+          centerTop: '${active.length}',
+          centerBottom: 'Walio hai',
+          valueFormat: (v) => v.toStringAsFixed(0),
+          slices: [for (final e in genderCounts.entries) ChartSlice(e.key, e.value, genderColor(e.key))],
+        ),
+      ),
+      ChartCard(
+        title: 'Wafanyakazi kwa Kituo cha Kazi (Top 6)',
+        child: BarList(items: _rank(stationCounts, top: 6), valueFormat: (v) => v.toStringAsFixed(0)),
+      ),
+      ChartCard(
+        title: 'Mgawanyo wa Mishahara ya Msingi',
+        subtitle: 'Idadi ya wafanyakazi kwa kiwango cha mshahara wa msingi (TZS)',
+        child: ColumnChart(items: bandItems, color: const Color(0xFF7C3AED), valueFormat: (v) => v.toStringAsFixed(0)),
+      ),
+      ChartCard(
+        title: 'Posho kwa Aina (mwezi huu)',
+        subtitle: sourceNote,
+        child: BarList(items: _rank(allowanceTotals)),
+      ),
+      ChartCard(
+        title: 'Makato Mengine kwa Aina (mwezi huu)',
+        subtitle: sourceNote,
+        child: BarList(items: _rank(arrearTotals)),
+      ),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('TAKWIMU (CHARTS)', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Pal.brandText)),
+        const SizedBox(height: 10),
+        LayoutBuilder(builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          final cols = w >= 1250 ? 3 : (w >= 780 ? 2 : 1);
+          const gap = 16.0;
+          final cardWidth = (w - gap * (cols - 1)) / cols;
+          return Wrap(
+            spacing: gap,
+            runSpacing: gap,
+            children: [for (final c in cards) SizedBox(width: cardWidth, child: c)],
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _payrollStatusCard({
+    required NavigationController nav,
+    required String monthLabel,
+    required bool loading,
+    required String error,
+    required int processed,
+    required int eligible,
+    required int withoutStatus,
+    required int blocked,
+  }) {
+    final done = processed > 0;
+    final complete = done && eligible > 0 && processed >= eligible;
+    final accent = Pal.fg(loading
+        ? Colors.grey.shade600
+        : error.isNotEmpty
+            ? Colors.red.shade700
+            : complete
+                ? Colors.green.shade700
+                : (done ? Colors.amber.shade800 : Colors.orange.shade800));
+    final String title = loading
+        ? 'Inapakua hali ya payroll ya $monthLabel...'
+        : error.isNotEmpty
+            ? error
+            : done
+                ? 'Payroll ya $monthLabel: wafanyakazi $processed kati ya $eligible wameshughulikiwa'
+                : 'Payroll ya $monthLabel bado haijaendeshwa';
+    final progress = (eligible == 0 || !done) ? 0.0 : (processed / eligible).clamp(0.0, 1.0);
+
+    final alerts = <Widget>[
+      if (withoutStatus > 0)
+        _alertChip(Icons.warning_amber_rounded, 'Wafanyakazi $withoutStatus hawana Hali ya Mshahara', Colors.orange.shade800,
+            () => nav.goTo('salary_status')),
+      if (blocked > 0) _alertChip(Icons.block, 'Waliofungiwa: $blocked', Colors.red.shade700, () => nav.goTo('registration')),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Pal.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Pal.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(complete ? Icons.verified : Icons.pending_actions, color: accent, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(title, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: accent)),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () => nav.goTo('run_payroll'),
+                icon: const Icon(Icons.play_circle_outline, size: 16),
+                label: Text(done ? 'Fungua Payroll' : 'Endesha Payroll',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+          if (!loading && error.isEmpty && eligible > 0) ...[
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(value: progress, minHeight: 7, color: accent, backgroundColor: Pal.surfaceAlt),
+            ),
+          ],
+          if (alerts.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(spacing: 8, runSpacing: 6, children: alerts),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _alertChip(IconData icon, String text, Color color, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(text, style: TextStyle(fontSize: 10.5, color: color, fontWeight: FontWeight.w600)),
+        ]),
+      ),
+    );
   }
 
   Widget _banner(NavigationController nav) {
@@ -159,6 +502,7 @@ class DashboardScreen extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.center,
         runSpacing: 12,
         children: [
+          const Padding(padding: EdgeInsets.only(right: 18), child: TugheLogo(size: 84, radius: 18)),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 520),
             child: Column(
@@ -200,7 +544,6 @@ class DashboardScreen extends StatelessWidget {
               ),
               ElevatedButton.icon(
                 onPressed: () => nav.goTo('salary_slip'),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade800, foregroundColor: Colors.white),
                 icon: const Icon(Icons.description_outlined, size: 16),
                 label: const Text('Hati za Mshahara', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
               ),
@@ -225,9 +568,9 @@ class DashboardScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Pal.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: Pal.border),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -238,7 +581,7 @@ class DashboardScreen extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(label,
-                    style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Colors.black38, letterSpacing: 0.5)),
+                    style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Pal.textMuted, letterSpacing: 0.5)),
               ),
               Container(
                 padding: const EdgeInsets.all(6),
@@ -268,14 +611,14 @@ class DashboardScreen extends StatelessWidget {
             children: [
               Flexible(
                 child: Text(footer,
-                    overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, color: Colors.black54)),
+                    overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 10.5, color: Pal.textSecondary)),
               ),
               if (footerAction != null)
                 TextButton(
                   style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(10, 20)),
                   onPressed: footerAction.$2,
                   child: Text(footerAction.$1,
-                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _brandBlue)),
+                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Pal.brandText)),
                 ),
             ],
           ),
@@ -288,9 +631,9 @@ class DashboardScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Pal.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: Pal.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -304,17 +647,18 @@ class DashboardScreen extends StatelessWidget {
               ),
               TextButton(
                 onPressed: () => nav.goTo('registration'),
-                child: const Text('Tazama Wote', style: TextStyle(fontSize: 10.5, color: _brandBlue, fontWeight: FontWeight.bold)),
+                child: Text('Tazama Wote', style: TextStyle(fontSize: 10.5, color: Pal.brandText, fontWeight: FontWeight.bold)),
               ),
             ],
           ),
           const Divider(),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
+          FullWidthScroll(
             child: DataTable(
-              headingRowHeight: 34,
-              dataRowMinHeight: 48,
-              dataRowMaxHeight: 60,
+              headingRowHeight: 38,
+              dataRowMinHeight: 56,
+              dataRowMaxHeight: 76,
+              dividerThickness: 0.6,
+              headingRowColor: WidgetStatePropertyAll(Pal.surfaceAlt),
               columns: const [
                 DataColumn(label: Text('Emp ID & Name', style: TextStyle(fontSize: 10))),
                 DataColumn(label: Text('Cheo / Kituo', style: TextStyle(fontSize: 10))),
@@ -331,7 +675,7 @@ class DashboardScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(emp.id, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _brandBlue)),
+                      Text(emp.id, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Pal.brandText)),
                       Text(emp.fullName, style: const TextStyle(fontSize: 10.5)),
                     ],
                   )),
@@ -341,22 +685,22 @@ class DashboardScreen extends StatelessWidget {
                     children: [
                       Text(emp.salaryStatus?.occupation ?? 'Haijawekwa', style: const TextStyle(fontSize: 10.5)),
                       Text(emp.salaryStatus?.workStation ?? '-',
-                          style: const TextStyle(fontSize: 9.5, color: Colors.black45)),
+                          style: TextStyle(fontSize: 9.5, color: Pal.textMuted)),
                     ],
                   )),
                   DataCell(Text(formatTZS(calc.basicSalary), style: const TextStyle(fontSize: 10.5))),
                   DataCell(Text('+${formatTZS(calc.totalAllowances)}',
-                      style: TextStyle(fontSize: 10.5, color: Colors.green.shade700))),
+                      style: TextStyle(fontSize: 10.5, color: Pal.fg(Colors.green.shade700)))),
                   DataCell(Text(formatTZS(calc.traPayeTax),
-                      style: TextStyle(fontSize: 10.5, color: Colors.purple.shade800))),
+                      style: TextStyle(fontSize: 10.5, color: Pal.fg(Colors.purple.shade800)))),
                   DataCell(Text(formatTZS(calc.netSalary),
-                      style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900, color: _brandBlue))),
+                      style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900, color: Pal.brandText))),
                   DataCell(TextButton(
                     onPressed: () {
                       onSelectEmployeeForSlip(emp);
                       nav.goTo('salary_slip');
                     },
-                    child: const Text('Slip', style: TextStyle(fontSize: 10, color: _brandBlue, fontWeight: FontWeight.bold)),
+                    child: Text('Slip', style: TextStyle(fontSize: 10, color: Pal.brandText, fontWeight: FontWeight.bold)),
                   )),
                 ]);
               }).toList(),
@@ -371,9 +715,9 @@ class DashboardScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Pal.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: Pal.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -386,7 +730,7 @@ class DashboardScreen extends StatelessWidget {
               ),
               TextButton(
                 onPressed: () => nav.goTo('settings_salary_terms'),
-                child: const Text('Badili', style: TextStyle(fontSize: 10.5, color: _brandBlue)),
+                child: Text('Badili', style: TextStyle(fontSize: 10.5, color: Pal.brandText)),
               ),
             ],
           ),
@@ -395,9 +739,9 @@ class DashboardScreen extends StatelessWidget {
                 margin: const EdgeInsets.only(bottom: 8),
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: Pal.surfaceAlt,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: Pal.border),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -406,12 +750,12 @@ class DashboardScreen extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text('Term ${term.termNumber}',
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _brandBlue)),
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Pal.brandText)),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(20)),
+                          decoration: BoxDecoration(color: Pal.tint(Colors.blue), borderRadius: BorderRadius.circular(20)),
                           child: Text('${term.percentage}%',
-                              style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900, color: _brandBlue)),
+                              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900, color: Pal.brandText)),
                         ),
                       ],
                     ),
@@ -422,20 +766,20 @@ class DashboardScreen extends StatelessWidget {
                     ),
                     if (term.additionAmount > 0)
                       Text('+ Nyongeza ya Kodi: ${formatTZS(term.additionAmount)}',
-                          style: TextStyle(fontSize: 9.5, color: Colors.purple.shade700, fontWeight: FontWeight.w600)),
+                          style: TextStyle(fontSize: 9.5, color: Pal.fg(Colors.purple.shade700), fontWeight: FontWeight.w600)),
                   ],
                 ),
               )),
           Container(
             padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(10)),
-            child: const Column(
+            decoration: BoxDecoration(color: Pal.tint(Colors.blue), borderRadius: BorderRadius.circular(10)),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('NSSF / PSSSF Contribution', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: _brandBlue)),
+                Text('NSSF / PSSSF Contribution', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Pal.brandText)),
                 SizedBox(height: 2),
                 Text('Kutoa 10% ya Mshahara wa Msingi kabla ya kukokotoa kodi ya PAYE.',
-                    style: TextStyle(fontSize: 10, color: _brandBlue)),
+                    style: TextStyle(fontSize: 10, color: Pal.brandText)),
               ],
             ),
           ),

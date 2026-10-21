@@ -7,6 +7,7 @@ import '../network/api_exception.dart';
 import '../network/api_service.dart';
 import '../utils/payroll_calculator.dart' show defaultTraTerms;
 import '../utils/persistence_service.dart';
+import '../core/tr_snack.dart';
 
 class SalaryTermsController extends GetxController {
   SalaryTermsController({PersistenceService? persistence, ApiService? apiService})
@@ -75,7 +76,7 @@ class SalaryTermsController extends GetxController {
     } catch (error) {
       if (error is ApiException && !error.isNetworkError) {
         errorMessage.value = error.message;
-        Get.snackbar('Imeshindwa kupakua Vigezo vya Kodi (TRA)', error.message);
+        trSnack('Imeshindwa kupakua Vigezo vya Kodi (TRA)', error.message);
       }
     } finally {
       _isRefreshing = false;
@@ -122,7 +123,7 @@ class SalaryTermsController extends GetxController {
     }).catchError((error) {
       traTerms.assignAll(previous);
       unawaited(_persist());
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kuhifadhi Vigezo vya Kodi (TRA).');
     });
   }

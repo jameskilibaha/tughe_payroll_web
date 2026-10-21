@@ -8,6 +8,7 @@ import '../network/api_exception.dart';
 import '../network/api_service.dart';
 import '../utils/persistence_service.dart';
 import 'employee_controller.dart';
+import '../core/tr_snack.dart';
 
 class AllowancesSettingsController extends GetxController {
   AllowancesSettingsController({PersistenceService? persistence, ApiService? apiService})
@@ -76,7 +77,7 @@ class AllowancesSettingsController extends GetxController {
     } catch (error) {
       if (error is ApiException && !error.isNetworkError) {
         errorMessage.value = error.message;
-        Get.snackbar('Imeshindwa kupakua mipangilio ya posho', error.message);
+        trSnack('Imeshindwa kupakua mipangilio ya posho', error.message);
       }
     } finally {
       _isRefreshing = false;
@@ -119,6 +120,7 @@ class AllowancesSettingsController extends GetxController {
       allowancesType: setting.allowanceType.toUpperCase(),
       percentOrAmount: setting.defaultValue,
       isForEverOne: setting.isForEveryone,
+      isTaxable: setting.isTaxable,
     )
         .then((created) {
       final i = masterAllowances.indexWhere((m) => m.id == setting.id);
@@ -127,7 +129,7 @@ class AllowancesSettingsController extends GetxController {
         unawaited(_persist());
       }
     }).catchError((error) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kuhifadhi mpangilio wa posho (${setting.name}).');
     });
   }
@@ -140,7 +142,7 @@ class AllowancesSettingsController extends GetxController {
     final backendId = setting?.backendId;
     if (backendId == null) return;
     _api.blockAllowanceSetting(backendId).catchError((error) {
-      Get.snackbar('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kufuta mpangilio.');
+      trSnack('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kufuta mpangilio.');
     });
   }
 
@@ -156,19 +158,19 @@ class AllowancesSettingsController extends GetxController {
   Future<void> syncSettingToEmployees(MasterAllowanceSetting setting) async {
     final backendId = setting.backendId;
     if (backendId == null) {
-      Get.snackbar('Haiwezekani', 'Mpangilio huu bado haujahifadhiwa kwenye seva.');
+      trSnack('Haiwezekani', 'Mpangilio huu bado haujahifadhiwa kwenye seva.');
       return;
     }
     try {
       final result = await _api.syncAllowanceSettingToEmployees(backendId);
       final count = (result['employeesUpdated'] as num?)?.toInt() ?? 0;
-      Get.snackbar('Imefanikiwa',
+      trSnack('Imefanikiwa',
           'Wafanyakazi $count wamesasishwa na thamani mpya ya "${setting.name}".');
       if (Get.isRegistered<EmployeeController>()) {
         unawaited(Get.find<EmployeeController>().refreshFromBackend());
       }
     } catch (error) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kusasisha wafanyakazi.');
     }
   }

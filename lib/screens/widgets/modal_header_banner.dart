@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
+import '../../core/tr_text.dart';
 
 /// Branded gradient header banner used at the top of employee action dialogs
 /// (Salary Status, Arrears, Allowances, Detail) — mirrors the colored

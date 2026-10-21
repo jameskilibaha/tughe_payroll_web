@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:loading_animation_widget/loading_animation_widget.dart';
+import '../../core/tr_text.dart';
+import '../../core/theme.dart';
 
 const _brandBlue = Color(0xFF1E3A8A);
 
@@ -19,9 +21,9 @@ class AppLoadingIndicator extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            LoadingAnimationWidget.staggeredDotsWave(color: _brandBlue, size: 44),
+            LoadingAnimationWidget.staggeredDotsWave(color: Pal.brandText, size: 44),
             const SizedBox(height: 14),
-            Text(message, style: const TextStyle(color: Colors.black54, fontSize: 12)),
+            Text(message, style: TextStyle(color: Pal.textSecondary, fontSize: 12)),
           ],
         ),
       ),
@@ -46,13 +48,12 @@ class AppErrorRetryView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.cloud_off_outlined, size: 34, color: Colors.black38),
+            Icon(Icons.cloud_off_outlined, size: 34, color: Pal.textMuted),
             const SizedBox(height: 10),
-            Text(message, textAlign: TextAlign.center, style: const TextStyle(color: Colors.black54, fontSize: 12)),
+            Text(message, textAlign: TextAlign.center, style: TextStyle(color: Pal.textSecondary, fontSize: 12)),
             const SizedBox(height: 14),
             ElevatedButton.icon(
               onPressed: onRetry,
-              style: ElevatedButton.styleFrom(backgroundColor: _brandBlue, foregroundColor: Colors.white),
               icon: const Icon(Icons.refresh, size: 16),
               label: const Text('Jaribu Tena', style: TextStyle(fontSize: 12)),
             ),

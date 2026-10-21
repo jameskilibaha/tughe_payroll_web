@@ -1,10 +1,14 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
 
 import '../../controllers/salary_terms_controller.dart';
 import '../../models/tra_salary_term.dart';
 import '../widgets/responsive_header_bar.dart';
 import '../widgets/app_status_views.dart';
+import '../../core/tr_text.dart';
+import '../../core/translations.dart';
+import '../../core/theme.dart';
+import '../../utils/formatters.dart';
 
 const _brandBlue = Color(0xFF1E3A8A);
 
@@ -28,10 +32,10 @@ class _SettingsSalaryTermsScreenState extends State<SettingsSalaryTermsScreen> {
   void _syncControllers() {
     _controllers = _ctrl.traTerms
         .map((t) => {
-              'min': TextEditingController(text: t.minSalary.toStringAsFixed(0)),
-              'max': TextEditingController(text: t.maxSalary >= 999999999 ? '' : t.maxSalary.toStringAsFixed(0)),
-              'percentage': TextEditingController(text: t.percentage.toStringAsFixed(0)),
-              'addition': TextEditingController(text: t.additionAmount.toStringAsFixed(0)),
+              'min': TextEditingController(text: plainAmount(t.minSalary)),
+              'max': TextEditingController(text: t.maxSalary >= 999999999 ? '' : plainAmount(t.maxSalary)),
+              'percentage': TextEditingController(text: plainAmount(t.percentage)),
+              'addition': TextEditingController(text: plainAmount(t.additionAmount)),
             })
         .toList();
   }
@@ -67,12 +71,12 @@ class _SettingsSalaryTermsScreenState extends State<SettingsSalaryTermsScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           ResponsiveHeaderBar(
-            title: const Text('TRA FORMULA SETTINGS (SALARY TERMS)',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: _brandBlue)),
-            subtitle: const Text(
+            title: Text('TRA FORMULA SETTINGS (SALARY TERMS)',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Pal.brandText)),
+            subtitle: Text(
               'Simamia viwango vya kodi ya TRA PAYE (Term 1 hadi 5) yanayotumika '
               'kukokotoa kodi ya mshahara kwa wafanyakazi wote.',
-              style: TextStyle(fontSize: 11, color: Colors.black54),
+              style: TextStyle(fontSize: 11, color: Pal.textSecondary),
             ),
             actions: [
               OutlinedButton.icon(
@@ -82,7 +86,6 @@ class _SettingsSalaryTermsScreenState extends State<SettingsSalaryTermsScreen> {
               ),
               ElevatedButton.icon(
                 onPressed: _save,
-                style: ElevatedButton.styleFrom(backgroundColor: _brandBlue, foregroundColor: Colors.white),
                 icon: const Icon(Icons.save_outlined, size: 16),
                 label: const Text('Hifadhi Fomula', style: TextStyle(fontSize: 11)),
               ),
@@ -99,8 +102,8 @@ class _SettingsSalaryTermsScreenState extends State<SettingsSalaryTermsScreen> {
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Text('Hakuna Vigezo vya Kodi vilivyowekwa bado.',
-                                    style: TextStyle(color: Colors.black45)),
+                                Text('Hakuna Vigezo vya Kodi vilivyowekwa bado.',
+                                    style: TextStyle(color: Pal.textMuted)),
                                 const SizedBox(height: 10),
                                 OutlinedButton.icon(
                                   onPressed: _reset,
@@ -119,15 +122,15 @@ class _SettingsSalaryTermsScreenState extends State<SettingsSalaryTermsScreen> {
                               return Container(
                                 padding: const EdgeInsets.all(14),
                                 decoration: BoxDecoration(
-                                  color: Colors.white,
+                                  color: Pal.surface,
                                   borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                                  border: Border.all(color: Pal.border),
                                 ),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text('Term ${term.termNumber}',
-                                        style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: _brandBlue)),
+                                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Pal.brandText)),
                                     const SizedBox(height: 8),
                                     Wrap(
                                       spacing: 10,
@@ -156,7 +159,7 @@ class _SettingsSalaryTermsScreenState extends State<SettingsSalaryTermsScreen> {
       child: TextField(
         controller: ctrl,
         keyboardType: TextInputType.number,
-        decoration: InputDecoration(labelText: label, labelStyle: const TextStyle(fontSize: 10), isDense: true),
+        decoration: InputDecoration(labelText: tr(label), labelStyle: const TextStyle(fontSize: 10), isDense: true),
         style: const TextStyle(fontSize: 12),
       ),
     );

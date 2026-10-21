@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
 
 import '../../controllers/allowances_settings_controller.dart';
@@ -7,6 +7,10 @@ import '../../models/assigned_allowance.dart';
 import '../../models/employee.dart';
 import '../../utils/formatters.dart';
 import 'modal_header_banner.dart';
+import '../../core/tr_text.dart';
+import '../../core/translations.dart';
+import '../../core/tr_snack.dart';
+import '../../core/theme.dart';
 
 // Matches the original EmployeeAllowancesModal.tsx: purple/indigo gradient
 // header with a purple-600 dialog border (not green).
@@ -47,7 +51,7 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
       _selectedMasterId = settingId;
       _nameCtrl.text = master.name;
       _additionType = master.additionType;
-      _valueCtrl.text = master.defaultValue.toStringAsFixed(0);
+      _valueCtrl.text = plainAmount(master.defaultValue);
       _isSpecial = master.allowanceType == 'Special';
     });
   }
@@ -176,7 +180,7 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                               text: TextSpan(
                                 style: TextStyle(fontSize: 11, color: _purple900),
                                 children: [
-                                  const TextSpan(text: 'Mfanyakazi: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                                  TextSpan(text: tr('Mfanyakazi: '), style: TextStyle(fontWeight: FontWeight.bold)),
                                   TextSpan(text: '${widget.employee.fullName} (${widget.employee.id})'),
                                 ],
                               ),
@@ -187,7 +191,7 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                             text: TextSpan(
                               style: TextStyle(fontSize: 11, color: _purple900),
                               children: [
-                                const TextSpan(text: 'Mshahara Msingi: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                                TextSpan(text: tr('Mshahara Msingi: '), style: TextStyle(fontWeight: FontWeight.bold)),
                                 TextSpan(text: formatTZS(_basicSalary)),
                               ],
                             ),
@@ -198,7 +202,7 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                     const SizedBox(height: 14),
                     Container(
                       padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
+                      decoration: BoxDecoration(color: Pal.surfaceAlt, borderRadius: BorderRadius.circular(12)),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -211,8 +215,8 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                           const SizedBox(height: 10),
                           DropdownButtonFormField<String>(
                             value: _selectedMasterId,
-                            decoration: const InputDecoration(
-                                labelText: 'Chagua kutoka Mipangilio Mikuu (Master Allowances)', isDense: true),
+                            decoration: InputDecoration(
+                                labelText: tr('Chagua kutoka Mipangilio Mikuu (Master Allowances)'), isDense: true),
                             items: masterAllowances
                                 .map((m) => DropdownMenuItem(
                                     value: m.id,
@@ -225,9 +229,9 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                           const SizedBox(height: 10),
                           TextField(
                             controller: _nameCtrl,
-                            decoration: const InputDecoration(
-                                labelText: 'Jina la Posho / Allowance Name *',
-                                hintText: 'e.g. Posho ya Nyumba, Posho ya Usafiri',
+                            decoration: InputDecoration(
+                                labelText: tr('Jina la Posho / Allowance Name *'),
+                                hintText: tr('e.g. Posho ya Nyumba, Posho ya Usafiri'),
                                 isDense: true),
                           ),
                           const SizedBox(height: 10),
@@ -235,7 +239,7 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                             Expanded(
                               child: DropdownButtonFormField<String>(
                                 value: _additionType,
-                                decoration: const InputDecoration(labelText: 'Aina ya Nyongeza', isDense: true),
+                                decoration: InputDecoration(labelText: tr('Aina ya Nyongeza'), isDense: true),
                                 items: const [
                                   DropdownMenuItem(value: 'Percent', child: Text('Nyongeza kwa Percent (%)', style: TextStyle(fontSize: 11))),
                                   DropdownMenuItem(value: 'Amount', child: Text('Nyongeza kwa Amount (TZS)', style: TextStyle(fontSize: 11))),
@@ -248,7 +252,7 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                               child: TextField(
                                 controller: _valueCtrl,
                                 keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(labelText: 'Kiwango', isDense: true),
+                                decoration: InputDecoration(labelText: tr('Kiwango'), isDense: true),
                               ),
                             ),
                           ]),
@@ -267,7 +271,7 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                               onPressed: () {
                                 final added = _addAllowance();
                                 if (!added) {
-                                  Get.snackbar('Jina Linahitajika', 'Tafadhali jaza "Jina la Posho" kwanza.');
+                                  trSnack('Jina Linahitajika', 'Tafadhali jaza "Jina la Posho" kwanza.');
                                 }
                               },
                               style: ElevatedButton.styleFrom(backgroundColor: _purple600, foregroundColor: Colors.white),
@@ -282,9 +286,9 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                     const Text('Posho Zilizowekwa', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     const SizedBox(height: 6),
                     if (_allowances.isEmpty)
-                      const Padding(
+                      Padding(
                         padding: EdgeInsets.symmetric(vertical: 10),
-                        child: Text('Hakuna posho zilizowekwa bado.', style: TextStyle(color: Colors.black45, fontSize: 11)),
+                        child: Text('Hakuna posho zilizowekwa bado.', style: TextStyle(color: Pal.textMuted, fontSize: 11)),
                       )
                     else
                       ..._allowances.map((a) => Container(
@@ -299,7 +303,7 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                               children: [
                                 Container(
                                   padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
+                                  decoration: BoxDecoration(color: Pal.surface, borderRadius: BorderRadius.circular(8)),
                                   child: Icon(Icons.card_giftcard, size: 14, color: _purple600),
                                 ),
                                 const SizedBox(width: 10),
@@ -327,12 +331,12 @@ class _AllowancesDialogState extends State<_AllowancesDialog> {
                                   ),
                                 ),
                                 IconButton(
-                                  tooltip: 'Ondoa Kwenye Orodha (itafutwa seva ukibonyeza Hifadhi)',
+                                  tooltip: tr('Ondoa Kwenye Orodha (itafutwa seva ukibonyeza Hifadhi)'),
                                   icon: const Icon(Icons.remove_circle_outline, size: 18, color: Colors.orange),
                                   onPressed: () => _removeAllowance(a.id),
                                 ),
                                 IconButton(
-                                  tooltip: 'Futa Kabisa Sasa (moja kwa moja kwenye seva)',
+                                  tooltip: tr('Futa Kabisa Sasa (moja kwa moja kwenye seva)'),
                                   icon: const Icon(Icons.delete_forever, size: 18, color: Colors.red),
                                   onPressed: () => _deleteNow(a),
                                 ),

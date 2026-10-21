@@ -13,6 +13,7 @@ class AssignedArrear {
     required this.isCreditOrDebit,
     this.backendId,
     this.backendArrearsId,
+    this.needsTotal = false,
   });
 
   final String id;
@@ -25,6 +26,10 @@ class AssignedArrear {
   final double? remainingDebtAmount; // e.g. Remaining debt
   final String frequency; // Always | Ones
   final String isCreditOrDebit; // Credit | Debit
+
+  /// A "Credit & Debit" arrear that has NO total debt recorded (an older assignment): it cannot stop by
+  /// itself until a total is entered.
+  final bool needsTotal;
 
   /// Real numeric primary key of the `emp_arrears` row on the backend.
   final int? backendId;
@@ -107,6 +112,11 @@ class AssignedArrear {
     required String frequency,
     AssignedArrear? previous,
   }) {
+    // A DEBT is stored with amount = TOTAL owed and deduction = monthly installment;
+    // the server reports what is still unpaid (`amountRemain`).
+    final isDebt = json['isDebt'] == true;
+    final amount = (json['amount'] as num?)?.toDouble() ?? 0;
+    final installment = (json['deduction'] as num?)?.toDouble() ?? amount;
     return AssignedArrear(
       id: 'EA-${json['id']}',
       backendId: (json['id'] as num?)?.toInt(),
@@ -114,10 +124,11 @@ class AssignedArrear {
       settingId: masterSettingId,
       name: name,
       deductionType: deductionType,
-      value: (json['amount'] as num?)?.toDouble() ?? 0,
-      isDebtReduction: previous?.isDebtReduction ?? false,
-      totalDebtAmount: previous?.totalDebtAmount,
-      remainingDebtAmount: previous?.remainingDebtAmount,
+      value: isDebt ? installment : amount,
+      needsTotal: json['needsTotal'] == true,
+      isDebtReduction: isDebt,
+      totalDebtAmount: isDebt ? amount : null,
+      remainingDebtAmount: isDebt ? ((json['amountRemain'] as num?)?.toDouble() ?? amount) : null,
       frequency: frequency,
       isCreditOrDebit: isCreditOrDebit,
     );

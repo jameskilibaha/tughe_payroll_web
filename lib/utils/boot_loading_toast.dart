@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
+import '../core/tr_text.dart';
 
 /// Shows a "loading" toast (GetX snackbar with a progress indicator) while
 /// [readyFutures] are still in flight, then dismisses it automatically.

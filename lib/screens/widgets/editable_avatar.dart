@@ -1,8 +1,10 @@
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 
 import '../../utils/image_picker_helper.dart';
+import '../../core/tr_text.dart';
+import '../../core/theme.dart';
 
 /// Reusable circular avatar that fetches and shows a photo file (by
 /// filename, via [fetchBytes]) or falls back to initials, with a small
@@ -98,11 +100,11 @@ class _EditableAvatarState extends State<EditableAvatar> {
             child: Container(
               padding: EdgeInsets.all(widget.radius * 0.15),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Pal.surface,
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.grey.shade300),
+                border: Border.all(color: Pal.border),
               ),
-              child: Icon(Icons.camera_alt, size: widget.radius * 0.5, color: Colors.blue.shade700),
+              child: Icon(Icons.camera_alt, size: widget.radius * 0.5, color: Pal.fg(Colors.blue.shade700)),
             ),
           ),
         ),

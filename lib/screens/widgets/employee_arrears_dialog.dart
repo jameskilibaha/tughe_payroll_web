@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
 
 import '../../controllers/arrears_settings_controller.dart';
@@ -7,6 +7,10 @@ import '../../models/assigned_arrear.dart';
 import '../../models/employee.dart';
 import '../../utils/formatters.dart';
 import 'modal_header_banner.dart';
+import '../../core/tr_text.dart';
+import '../../core/translations.dart';
+import '../../core/tr_snack.dart';
+import '../../core/theme.dart';
 
 // Matches the original EmployeeArrearsModal.tsx: amber gradient header with
 // an amber-500 dialog border.
@@ -33,14 +37,16 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
   String? _selectedMasterId;
   final _nameCtrl = TextEditingController();
   final _valueCtrl = TextEditingController(text: '2');
-  final _totalDebtCtrl = TextEditingController(text: '0');
-  final _remainingDebtCtrl = TextEditingController(text: '0');
+  final _totalDebtCtrl = TextEditingController(text: '');
   String _deductionType = 'Percent';
   String _frequency = 'Always';
   String _creditOrDebit = 'Debit';
   bool _isDebtReduction = false;
 
   double get _basicSalary => widget.employee.salaryStatus?.basicSalary ?? 0;
+
+  /// The chosen master arrear is "Credit & Debit" (a debt): debt mode is on and cannot be switched off.
+  bool _masterIsDebt = false;
 
   void _applyMasterSetting(String settingId) {
     final matches = Get.find<ArrearsSettingsController>().masterArrears.where((m) => m.id == settingId);
@@ -50,14 +56,16 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
       _selectedMasterId = settingId;
       _nameCtrl.text = master.name;
       _deductionType = master.deductionType;
-      _valueCtrl.text = master.defaultValue.toStringAsFixed(0);
-      _frequency = master.frequency;
-      _creditOrDebit = master.isCreditOrDebit;
+      _valueCtrl.text = plainAmount(master.defaultValue);
+      _frequency = master.frequencyLabel;
+      _creditOrDebit = master.creditDebitLabel;
+      // "Credit & Debit" means a DEBT: deducted every month until it is paid in full, then removed.
+      _masterIsDebt = master.isPermanentDeduction;
       final lower = master.name.toLowerCase();
-      _isDebtReduction = lower.contains('deni') || lower.contains('mkopo');
+      _isDebtReduction = _masterIsDebt || lower.contains('deni') || lower.contains('mkopo');
       if (_isDebtReduction) {
-        _totalDebtCtrl.text = '1000000';
-        _remainingDebtCtrl.text = '500000';
+        _deductionType = 'Amount'; // a debt is repaid with a fixed amount every month
+        _totalDebtCtrl.text = '';
       }
     });
   }
@@ -68,6 +76,11 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
   /// successfully").
   bool _addArrear() {
     if (_nameCtrl.text.trim().isEmpty) return false;
+    final totalDebt = double.tryParse(_totalDebtCtrl.text.trim()) ?? 0;
+    if (_isDebtReduction && totalDebt <= 0) {
+      trSnack('Jumla ya Deni', 'Weka Jumla ya Deni (zaidi ya 0) kabla ya kuliongeza.');
+      return false;
+    }
     final item = AssignedArrear(
       id: 'ARR-${DateTime.now().millisecondsSinceEpoch}',
       settingId: _selectedMasterId,
@@ -75,8 +88,8 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
       deductionType: _deductionType,
       value: double.tryParse(_valueCtrl.text) ?? 0,
       isDebtReduction: _isDebtReduction,
-      totalDebtAmount: _isDebtReduction ? (double.tryParse(_totalDebtCtrl.text) ?? 0) : null,
-      remainingDebtAmount: _isDebtReduction ? (double.tryParse(_remainingDebtCtrl.text) ?? 0) : null,
+      totalDebtAmount: _isDebtReduction ? totalDebt : null,
+      remainingDebtAmount: _isDebtReduction ? totalDebt : null, // a new debt: nothing paid yet
       frequency: _frequency,
       isCreditOrDebit: _creditOrDebit,
     );
@@ -86,6 +99,7 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
       _nameCtrl.clear();
       _valueCtrl.text = '2';
       _isDebtReduction = false;
+      _totalDebtCtrl.clear();
       _deductionType = 'Percent';
     });
     return true;
@@ -197,7 +211,7 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                               text: TextSpan(
                                 style: TextStyle(fontSize: 11, color: _amber900),
                                 children: [
-                                  const TextSpan(text: 'Mfanyakazi: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                                  TextSpan(text: tr('Mfanyakazi: '), style: TextStyle(fontWeight: FontWeight.bold)),
                                   TextSpan(text: '${widget.employee.fullName} (${widget.employee.id})'),
                                 ],
                               ),
@@ -208,7 +222,7 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                             text: TextSpan(
                               style: TextStyle(fontSize: 11, color: _amber900),
                               children: [
-                                const TextSpan(text: 'Mshahara Msingi: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                                TextSpan(text: tr('Mshahara Msingi: '), style: TextStyle(fontWeight: FontWeight.bold)),
                                 TextSpan(text: formatTZS(_basicSalary)),
                               ],
                             ),
@@ -219,7 +233,7 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                     const SizedBox(height: 14),
                     Container(
                       padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
+                      decoration: BoxDecoration(color: Pal.surfaceAlt, borderRadius: BorderRadius.circular(12)),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -232,8 +246,8 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                           const SizedBox(height: 10),
                           DropdownButtonFormField<String>(
                             value: _selectedMasterId,
-                            decoration: const InputDecoration(
-                                labelText: 'Chagua kutoka Mipangilio Mikuu (Master Arrears)', isDense: true),
+                            decoration: InputDecoration(
+                                labelText: tr('Chagua kutoka Mipangilio Mikuu (Master Arrears)'), isDense: true),
                             items: masterArrears
                                 .map((m) => DropdownMenuItem(value: m.id, child: Text(m.name, style: const TextStyle(fontSize: 11))))
                                 .toList(),
@@ -242,14 +256,14 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                           const SizedBox(height: 10),
                           TextField(
                             controller: _nameCtrl,
-                            decoration: const InputDecoration(labelText: 'Jina la Kato *', isDense: true),
+                            decoration: InputDecoration(labelText: tr('Jina la Kato *'), isDense: true),
                           ),
                           const SizedBox(height: 10),
                           Row(children: [
                             Expanded(
                               child: DropdownButtonFormField<String>(
                                 value: _deductionType,
-                                decoration: const InputDecoration(labelText: 'Aina', isDense: true),
+                                decoration: InputDecoration(labelText: tr('Aina'), isDense: true),
                                 items: const ['Amount', 'Percent', 'Nothing']
                                     .map((v) => DropdownMenuItem(value: v, child: Text(v, style: const TextStyle(fontSize: 11))))
                                     .toList(),
@@ -261,7 +275,7 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                               child: TextField(
                                 controller: _valueCtrl,
                                 keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(labelText: 'Kiwango', isDense: true),
+                                decoration: InputDecoration(labelText: tr('Kiwango'), isDense: true),
                               ),
                             ),
                           ]),
@@ -271,28 +285,54 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                             activeColor: _amber500,
                             title: const Text('Kato la Kupunguza Deni (Debt Reduction)', style: TextStyle(fontSize: 11.5)),
                             value: _isDebtReduction,
-                            onChanged: (v) => setState(() => _isDebtReduction = v),
+                            onChanged: _masterIsDebt
+                                ? null
+                                : (v) => setState(() {
+                                      _isDebtReduction = v;
+                                      if (v) _deductionType = 'Amount';
+                                    }),
                           ),
+                          if (_masterIsDebt)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Text(
+                                'Credit & Debit = DENI: linakatwa kila mwezi hadi lilipwe lote. Likiisha, makato yanaondolewa yenyewe kwa mfanyakazi huyu.',
+                                style: TextStyle(fontSize: 10.5, color: Pal.textSecondary),
+                              ),
+                            ),
                           if (_isDebtReduction)
                             Padding(
                               padding: const EdgeInsets.only(bottom: 8),
-                              child: Row(children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _totalDebtCtrl,
-                                    keyboardType: TextInputType.number,
-                                    decoration: const InputDecoration(labelText: 'Jumla ya Deni', isDense: true),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(children: [
+                                    Expanded(
+                                      child: TextField(
+                                        controller: _totalDebtCtrl,
+                                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                        onChanged: (_) => setState(() {}),
+                                        decoration: InputDecoration(labelText: tr('Jumla ya Deni'), isDense: true),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: InputDecorator(
+                                        decoration: InputDecoration(labelText: tr('Deni Lililobaki'), isDense: true),
+                                        child: Text(
+                                          formatTZS(double.tryParse(_totalDebtCtrl.text.trim()) ?? 0),
+                                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    ),
+                                  ]),
+                                  const SizedBox(height: 4),
+                                  const Text(
+                                    'Kiwango hapo juu ndicho kato la kila mwezi. Makato yanasimama yenyewe deni likiisha - kamwe hayashuki chini ya 0.',
+                                    style: TextStyle(fontSize: 10, color: Colors.black45),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: TextField(
-                                    controller: _remainingDebtCtrl,
-                                    keyboardType: TextInputType.number,
-                                    decoration: const InputDecoration(labelText: 'Deni Lililobaki', isDense: true),
-                                  ),
-                                ),
-                              ]),
+                                ],
+                              ),
                             ),
                           Align(
                             alignment: Alignment.centerRight,
@@ -300,7 +340,7 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                               onPressed: () {
                                 final added = _addArrear();
                                 if (!added) {
-                                  Get.snackbar('Jina Linahitajika', 'Tafadhali jaza "Jina la Kato" kwanza.');
+                                  trSnack('Jina Linahitajika', 'Tafadhali jaza "Jina la Kato" kwanza.');
                                 }
                               },
                               style: ElevatedButton.styleFrom(backgroundColor: _amber700, foregroundColor: Colors.white),
@@ -315,9 +355,9 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                     const Text('Makato Yaliyowekwa', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     const SizedBox(height: 6),
                     if (_arrears.isEmpty)
-                      const Padding(
+                      Padding(
                         padding: EdgeInsets.symmetric(vertical: 10),
-                        child: Text('Hakuna makato yaliyowekwa bado.', style: TextStyle(color: Colors.black45, fontSize: 11)),
+                        child: Text('Hakuna makato yaliyowekwa bado.', style: TextStyle(color: Pal.textMuted, fontSize: 11)),
                       )
                     else
                       ..._arrears.map((a) => Container(
@@ -332,7 +372,7 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                               children: [
                                 Container(
                                   padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
+                                  decoration: BoxDecoration(color: Pal.surface, borderRadius: BorderRadius.circular(8)),
                                   child: Icon(Icons.trending_down, size: 14, color: _amber700),
                                 ),
                                 const SizedBox(width: 10),
@@ -356,19 +396,31 @@ class _ArrearsDialogState extends State<_ArrearsDialog> {
                                         a.deductionType == 'Percent' ? '${a.value}%' : formatTZS(a.value),
                                         style: TextStyle(fontSize: 10.5, color: _amber900.withOpacity(0.85)),
                                       ),
+                                      if (a.needsTotal)
+                                        Text('Deni hili halina Jumla ya Deni - ondoa na uliweke tena na jumla ili makato yasimame yenyewe likiisha.',
+                                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange.shade800)),
+                                      if (a.isDebtReduction && a.totalDebtAmount != null)
+                                        Text('Jumla ya Deni: ${formatTZS(a.totalDebtAmount!)}',
+                                            style: TextStyle(fontSize: 10, color: Pal.textSecondary)),
                                       if (a.isDebtReduction && a.remainingDebtAmount != null)
-                                        Text('Deni Lililobaki: ${formatTZS(a.remainingDebtAmount!)}',
-                                            style: const TextStyle(fontSize: 10, color: Colors.deepOrange)),
+                                        Text(
+                                          a.remainingDebtAmount! <= 0
+                                              ? 'Deni limelipwa kikamilifu - hakuna makato yanayoendelea'
+                                              : 'Deni Lililobaki: ${formatTZS(a.remainingDebtAmount!)}',
+                                          style: TextStyle(
+                                              fontSize: 10,
+                                              color: a.remainingDebtAmount! <= 0 ? Colors.green.shade700 : Colors.deepOrange),
+                                        ),
                                     ],
                                   ),
                                 ),
                                 IconButton(
-                                  tooltip: 'Ondoa Kwenye Orodha (itafutwa seva ukibonyeza Hifadhi)',
+                                  tooltip: tr('Ondoa Kwenye Orodha (itafutwa seva ukibonyeza Hifadhi)'),
                                   icon: const Icon(Icons.remove_circle_outline, size: 18, color: Colors.orange),
                                   onPressed: () => _removeArrear(a.id),
                                 ),
                                 IconButton(
-                                  tooltip: 'Futa Kabisa Sasa (moja kwa moja kwenye seva)',
+                                  tooltip: tr('Futa Kabisa Sasa (moja kwa moja kwenye seva)'),
                                   icon: const Icon(Icons.delete_forever, size: 18, color: Colors.red),
                                   onPressed: () => _deleteNow(a),
                                 ),

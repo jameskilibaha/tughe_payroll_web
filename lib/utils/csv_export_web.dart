@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
+import 'dart:typed_data';
 
 import '../models/audit_log_entry.dart';
 
@@ -12,22 +14,38 @@ void downloadCsv({
   required List<String> headers,
   required List<List<Object?>> rows,
 }) {
-  String esc(Object? value) => '"${(value ?? '').toString().replaceAll('"', '""')}"';
+  // Money amounts are written with exactly 3 decimals (no floating-point noise,
+  // no rounding to whole shillings); integers (counts, ids) stay as they are.
+  String text(Object? value) => value is double ? value.toStringAsFixed(3) : (value ?? '').toString();
+  String esc(Object? value) => '"${text(value).replaceAll('"', '""')}"';
 
   final buffer = StringBuffer()..writeln(headers.map(esc).join(','));
   for (final row in rows) {
     buffer.writeln(row.map(esc).join(','));
   }
 
-  final bytes = utf8.encode(buffer.toString());
-  final blob = html.Blob([bytes], 'text/csv;charset=utf-8;');
+  // UTF-8 BOM so Excel opens the file with the right encoding (Swahili text,
+  // symbols) instead of garbling it. Real typed bytes: a plain Dart list of numbers
+  // would be written into the file as the text "239,187,191,...".
+  final bytes = Uint8List.fromList(<int>[0xEF, 0xBB, 0xBF, ...utf8.encode(buffer.toString())]);
+  saveBytesAs(filename: filename, bytes: bytes, mime: 'text/csv;charset=utf-8');
+}
+
+/// Hands [bytes] to the browser as a download called [filename].
+///
+/// The link is put in the page while it is clicked (Firefox and Edge ignore a link that is not
+/// in the page), and the temporary file address is released only after a minute - releasing it
+/// at once cancels the download of a large file ("Failed - Network error").
+void saveBytesAs({required String filename, required Uint8List bytes, String mime = 'application/octet-stream'}) {
+  final blob = html.Blob([bytes], mime);
   final url = html.Url.createObjectUrlFromBlob(blob);
-
-  html.AnchorElement(href: url)
+  final anchor = html.AnchorElement(href: url)
     ..setAttribute('download', filename)
-    ..click();
-
-  html.Url.revokeObjectUrl(url);
+    ..style.display = 'none';
+  html.document.body?.append(anchor);
+  anchor.click();
+  anchor.remove();
+  Timer(const Duration(minutes: 1), () => html.Url.revokeObjectUrl(url));
 }
 
 /// Exports audit log entries as a downloadable CSV file in the browser.

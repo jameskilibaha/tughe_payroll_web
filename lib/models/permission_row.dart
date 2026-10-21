@@ -72,6 +72,8 @@ const List<Map<String, String>> systemFunctions = [
   {'name': 'EMP_ALLOWANCES', 'label': 'Posho za Mfanyakazi (Employee Allowances)', 'category': 'Payroll'},
   {'name': 'SALARY_TERMS', 'label': 'Vigezo vya Kodi (TRA Salary Terms)', 'category': 'Payroll'},
   {'name': 'PAYROLL', 'label': 'Kuendesha Payroll (Run/Reverse Payroll)', 'category': 'Payroll'},
+  {'name': 'HR_RECORDS', 'label': 'Rekodi za HR (Mawasiliano, Wategemezi, Elimu, Mikataba)', 'category': 'HR'},
+  {'name': 'LEAVE', 'label': 'Likizo (Leave: Maombi na Idhini)', 'category': 'HR'},
   {'name': 'SALARY_SLIP', 'label': 'Hati za Mshahara (Salary Slip)', 'category': 'Ripoti'},
   {'name': 'REPORT', 'label': 'Ripoti (Reports)', 'category': 'Ripoti'},
   {'name': 'USER', 'label': 'Watumiaji wa Mfumo (Users)', 'category': 'Usimamizi'},
@@ -79,20 +81,43 @@ const List<Map<String, String>> systemFunctions = [
   {'name': 'AUDIT_TAILS', 'label': 'Kumbukumbu za Mfumo (Audit Log)', 'category': 'Usalama'},
 ];
 
-/// Preset role -> which of the [systemFunctions] they get full access to.
-/// Applying a role just toggles full-access on/off for each function
-/// accordingly - the detailed per-function checkboxes remain available
-/// afterward for fine-tuning by an admin.
-const Map<String, Set<String>> rolePresets = {
-  'Msimamizi (Admin)': {
+/// The three roles of the system. A role is not stored separately on the server: it
+/// follows the user's permissions (see tughe/user/role.py) and the server reports it
+/// with every user:
+///   Admin       manages users, permissions and everything else
+///   Accountant  does the payroll work (no user / permission / audit management)
+///   User        no permissions - the default for everybody newly registered (e.g. an
+///               employee). Only Admin and Accountant can sign in to the admin panel.
+/// An Admin changes a role in the panel; the server switches the permissions at once.
+const String kRoleAdmin = 'Admin';
+const String kRoleAccountant = 'Accountant'; // shown as Payroll Officer
+const String kRoleHr = 'HR';
+const String kRoleUser = 'User';
+const List<String> kAllRoles = [kRoleAdmin, kRoleAccountant, kRoleHr, kRoleUser];
+
+String roleLabel(String role) => switch (role) {
+      kRoleAdmin => 'Admin (Msimamizi)',
+      kRoleAccountant => 'Payroll Officer (Mhasibu wa Mshahara)',
+      kRoleHr => 'HR (Rasilimali Watu)',
+      kRoleUser => 'User (Mfanyakazi)',
+      _ => role,
+    };
+
+/// Which functions each role has FULL access to - the same table as the server
+/// (tughe/user/role.py). The app only needs it as a fallback: an older server without
+/// `PUT /api/permission/role` is given the permissions one by one instead.
+const Map<String, Set<String>> kRoleFunctions = {
+  kRoleAdmin: {
     'EMPLOYEE', 'ADD_ARREARS', 'ADD_ALLOWANCES', 'EMP_ARREARS', 'EMP_ALLOWANCES',
-    'SALARY_TERMS', 'PAYROLL', 'SALARY_SLIP', 'REPORT', 'USER', 'PERMISSION', 'AUDIT_TAILS',
+    'SALARY_TERMS', 'PAYROLL', 'SALARY_SLIP', 'REPORT', 'USER', 'PERMISSION', 'AUDIT_TAILS', 'HR_RECORDS', 'LEAVE',
   },
-  'Mhasibu (Accountant)': {
+  kRoleAccountant: {
     'EMPLOYEE', 'ADD_ARREARS', 'ADD_ALLOWANCES', 'EMP_ARREARS', 'EMP_ALLOWANCES',
     'SALARY_TERMS', 'PAYROLL', 'SALARY_SLIP', 'REPORT',
   },
-  'Mfanyakazi wa Kawaida (Employee)': {
-    'SALARY_SLIP', 'REPORT',
-  },
+  kRoleHr: {'EMPLOYEE', 'HR_RECORDS', 'LEAVE'}, // people only - never pay
+  kRoleUser: <String>{},
 };
+
+/// Roles that may sign in to the admin panel.
+bool roleCanSignIn(String role) => role == kRoleAdmin || role == kRoleAccountant || role == kRoleHr;

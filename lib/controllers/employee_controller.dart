@@ -13,6 +13,7 @@ import '../network/api_service.dart';
 import '../utils/persistence_service.dart';
 import 'allowances_settings_controller.dart';
 import 'arrears_settings_controller.dart';
+import '../core/tr_snack.dart';
 
 class EmployeeController extends GetxController {
   EmployeeController({PersistenceService? persistence, ApiService? apiService})
@@ -109,7 +110,7 @@ class EmployeeController extends GetxController {
     } catch (error) {
       if (error is ApiException && !error.isNetworkError) {
         errorMessage.value = error.message;
-        Get.snackbar('Imeshindwa kupakua wafanyakazi', error.message);
+        trSnack('Imeshindwa kupakua wafanyakazi', error.message);
       }
     } finally {
       _isRefreshing = false;
@@ -166,8 +167,8 @@ class EmployeeController extends GetxController {
           masterSettingId: 'ARR-$arrearsId',
           name: j['name'] as String? ?? '',
           deductionType: deductionModel == 'PERCENT' ? 'Percent' : (deductionModel == 'NOTHING' ? 'Nothing' : 'Amount'),
-          isCreditOrDebit: localSetting?.isCreditOrDebit ?? 'Debit',
-          frequency: localSetting?.frequency ?? 'Always',
+          isCreditOrDebit: localSetting?.creditDebitLabel ?? 'Credit',
+          frequency: localSetting?.frequencyLabel ?? 'Mara Moja (Ones)',
           previous: previousArrearsByBackendId[(j['id'] as num?)?.toInt()],
         );
       }).toList();
@@ -234,7 +235,7 @@ class EmployeeController extends GetxController {
       }
     } catch (error) {
       employees.removeWhere((e) => e.id == employee.id);
-      Get.snackbar('Imeshindikana Kusajili',
+      trSnack('Imeshindikana Kusajili',
           error is ApiException ? error.message : 'Imeshindwa kusajili mfanyakazi. Angalia muunganiko wa mtandao.');
     }
   }
@@ -265,7 +266,7 @@ class EmployeeController extends GetxController {
     } catch (error) {
       final revertIndex = employees.indexWhere((e) => e.id == updated.id);
       if (revertIndex != -1) employees[revertIndex] = previous;
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kuhifadhi mabadiliko ya mfanyakazi.');
     }
   }
@@ -315,7 +316,7 @@ class EmployeeController extends GetxController {
     final knownBackendId = previous.backendId;
     final backendId = await _resolveBackendEmployeeId(knownBackendId, previous.employeeIdNumber);
     if (backendId == null) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           'Huyu mfanyakazi hajapatikana kwenye seva bado. Subiri sekunde chache kisha jaribu tena.');
       return;
     }
@@ -327,7 +328,7 @@ class EmployeeController extends GetxController {
       if (refreshIndex != -1) employees[refreshIndex] = employees[refreshIndex].copyWith(photoFileName: fileName);
       unawaited(_persist());
     } catch (error) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kuhifadhi picha kwenye seva.');
     }
   }
@@ -345,7 +346,7 @@ class EmployeeController extends GetxController {
     if (backendId == null) {
       final revertIndex = employees.indexWhere((x) => x.id == localId);
       if (revertIndex != -1) employees[revertIndex] = e;
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           'Huyu mfanyakazi hajapatikana kwenye seva bado. Subiri sekunde chache kisha jaribu tena.');
       return;
     }
@@ -357,7 +358,7 @@ class EmployeeController extends GetxController {
     } catch (error) {
       final revertIndex = employees.indexWhere((x) => x.id == localId);
       if (revertIndex != -1) employees[revertIndex] = e;
-      Get.snackbar('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kubadilisha hali.');
+      trSnack('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kubadilisha hali.');
     }
   }
 
@@ -373,7 +374,7 @@ class EmployeeController extends GetxController {
     if (backendId == null) {
       final revertIndex = employees.indexWhere((e) => e.id == localId);
       if (revertIndex != -1) employees[revertIndex] = previous;
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           'Huyu mfanyakazi hajapatikana kwenye seva bado. Subiri sekunde chache kisha jaribu tena.');
       return;
     }
@@ -392,7 +393,7 @@ class EmployeeController extends GetxController {
     } catch (error) {
       final revertIndex = employees.indexWhere((e) => e.id == localId);
       if (revertIndex != -1) employees[revertIndex] = previous;
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kuhifadhi taarifa za mshahara.');
     }
   }
@@ -414,7 +415,7 @@ class EmployeeController extends GetxController {
       await _api.blockEmpArrear(
           id: arrear.backendId!, employeeId: previous.backendId!, arrearsId: arrear.backendArrearsId ?? 0);
     } catch (error) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kufuta deni "${arrear.name}" kwenye seva.');
     }
   }
@@ -497,7 +498,7 @@ class EmployeeController extends GetxController {
   }) async {
     final backendEmployeeId = await _resolveBackendEmployeeId(knownBackendEmployeeId, employeeIdNumber);
     if (backendEmployeeId == null) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           'Huyu mfanyakazi hajapatikana kwenye seva bado. Subiri sekunde chache baada ya kumsajili, kisha jaribu tena.');
       return;
     }
@@ -522,11 +523,21 @@ class EmployeeController extends GetxController {
 
         if (item.backendId == null) {
           final created = await _api.saveEmpArrear(
-              id: 0, amount: item.value, deduction: item.value, employeeId: backendEmployeeId, arrearsId: arrearsId);
+              id: 0,
+              amount: item.isDebtReduction ? (item.totalDebtAmount ?? item.value) : item.value,
+              deduction: item.value,
+              employeeId: backendEmployeeId,
+              arrearsId: arrearsId,
+              isDebt: item.isDebtReduction);
           item = item.copyWith(backendId: (created['id'] as num?)?.toInt());
         } else {
           await _api.saveEmpArrear(
-              id: item.backendId!, amount: item.value, deduction: item.value, employeeId: backendEmployeeId, arrearsId: arrearsId);
+              id: item.backendId!,
+              amount: item.isDebtReduction ? (item.totalDebtAmount ?? item.value) : item.value,
+              deduction: item.value,
+              employeeId: backendEmployeeId,
+              arrearsId: arrearsId,
+              isDebt: item.isDebtReduction);
           keptBackendIds.add(item.backendId!);
         }
         finalList.add(item);
@@ -536,7 +547,7 @@ class EmployeeController extends GetxController {
         final detail = error is ApiException ? error.message : error.toString();
         // ignore: avoid_print
         print('saveArrears failed for "${item.name}": $error\n$stack');
-        Get.snackbar('Imeshindikana: ${item.name}', detail, duration: const Duration(seconds: 8));
+        trSnack('Imeshindikana: ${item.name}', detail, duration: const Duration(seconds: 8));
         finalList.add(item); // keep it locally so the person doesn't lose what they typed
       }
     }
@@ -545,7 +556,7 @@ class EmployeeController extends GetxController {
       final removed = previousList?.firstWhereOrNull((a) => a.backendId == backendId);
       _api
           .blockEmpArrear(id: backendId, employeeId: backendEmployeeId, arrearsId: removed?.backendArrearsId ?? 0)
-          .catchError((error) => Get.snackbar(
+          .catchError((error) => trSnack(
               'Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kuondoa deni.'));
     }
 
@@ -573,7 +584,7 @@ class EmployeeController extends GetxController {
       await _api.blockEmpAllowance(
           id: allowance.backendId!, employeeId: previous.backendId!, allowanceId: allowance.backendAllowanceId ?? 0);
     } catch (error) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kufuta posho "${allowance.name}" kwenye seva.');
     }
   }
@@ -636,7 +647,7 @@ class EmployeeController extends GetxController {
   }) async {
     final backendEmployeeId = await _resolveBackendEmployeeId(knownBackendEmployeeId, employeeIdNumber);
     if (backendEmployeeId == null) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           'Huyu mfanyakazi hajapatikana kwenye seva bado. Subiri sekunde chache baada ya kumsajili, kisha jaribu tena.');
       return;
     }
@@ -673,7 +684,7 @@ class EmployeeController extends GetxController {
         final detail = error is ApiException ? error.message : error.toString();
         // ignore: avoid_print
         print('saveAllowances failed for "${item.name}": $error\n$stack');
-        Get.snackbar('Imeshindikana: ${item.name}', detail, duration: const Duration(seconds: 8));
+        trSnack('Imeshindikana: ${item.name}', detail, duration: const Duration(seconds: 8));
         finalList.add(item);
       }
     }
@@ -682,7 +693,7 @@ class EmployeeController extends GetxController {
       final removed = previousList?.firstWhereOrNull((a) => a.backendId == backendId);
       _api
           .blockEmpAllowance(id: backendId, employeeId: backendEmployeeId, allowanceId: removed?.backendAllowanceId ?? 0)
-          .catchError((error) => Get.snackbar(
+          .catchError((error) => trSnack(
               'Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kuondoa posho.'));
     }
 

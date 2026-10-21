@@ -5,6 +5,7 @@ import 'package:printing/printing.dart';
 import '../models/employee.dart';
 import '../models/payroll_calculation_result.dart';
 import 'formatters.dart';
+import 'logo_asset.dart';
 
 const _pdfBrandBlue = PdfColor.fromInt(0xFF1E3A8A);
 const _pdfEmerald = PdfColor.fromInt(0xFF065F46);
@@ -19,6 +20,8 @@ Future<void> printSalarySlip({
   required bool isOfficial,
 }) async {
   final doc = pw.Document();
+  final logoBytes = await loadTugheLogoBytes();
+  final logo = logoBytes == null ? null : pw.MemoryImage(logoBytes);
 
   doc.addPage(
     pw.Page(
@@ -27,7 +30,7 @@ Future<void> printSalarySlip({
       build: (context) => pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          _header(periodLabel, isOfficial),
+          _header(periodLabel, isOfficial, logo),
           pw.SizedBox(height: 14),
           pw.Divider(color: _pdfBrandBlue, thickness: 1.2),
           pw.SizedBox(height: 14),
@@ -53,28 +56,38 @@ Future<void> printSalarySlip({
   await Printing.layoutPdf(onLayout: (format) async => doc.save());
 }
 
-pw.Widget _header(String periodLabel, bool isOfficial) {
-  return pw.Row(
-    crossAxisAlignment: pw.CrossAxisAlignment.start,
-    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+pw.Widget _header(String periodLabel, bool isOfficial, pw.MemoryImage? logo) {
+  // The logo stands on BOTH sides of the title (left and right); without a logo picture the two
+  // places stay empty so the title is still centred.
+  pw.Widget mark() => logo != null ? pw.Image(logo, width: 54, height: 54, fit: pw.BoxFit.contain) : pw.SizedBox(width: 54, height: 54);
+  return pw.Column(
+    crossAxisAlignment: pw.CrossAxisAlignment.stretch,
     children: [
-      pw.Expanded(
-        child: pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text('TANZANIA UNION OF GOVERNMENT AND HEALTH EMPLOYEES',
-                style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: _pdfBrandBlue)),
-            pw.SizedBox(height: 2),
-            pw.Text('Chama cha Wafanyakazi wa Serikali na Afya Tanzania (TUGHE)',
-                style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: _pdfBrandBlue)),
-            pw.SizedBox(height: 2),
-            pw.Text('S.L.P 463, Dodoma / Dar es Salaam - Tanzania',
-                style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.grey700)),
-          ],
-        ),
+      pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.center,
+        children: [
+          mark(),
+          pw.Expanded(
+            child: pw.Column(
+              children: [
+                pw.Text('TANZANIA UNION OF GOVERNMENT AND HEALTH EMPLOYEES',
+                    textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: _pdfBrandBlue)),
+                pw.SizedBox(height: 2),
+                pw.Text('Chama cha Wafanyakazi wa Serikali na Afya Tanzania (TUGHE)',
+                    textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: _pdfBrandBlue)),
+                pw.SizedBox(height: 2),
+                pw.Text('S.L.P 463, Dodoma / Dar es Salaam - Tanzania',
+                    textAlign: pw.TextAlign.center, style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.grey700)),
+              ],
+            ),
+          ),
+          mark(),
+        ],
       ),
-      pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.end,
+      pw.SizedBox(height: 10),
+      pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
           pw.Container(
             padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -82,14 +95,17 @@ pw.Widget _header(String periodLabel, bool isOfficial) {
             child: pw.Text('SALARY SLIP / HATI YA MSHAHARA',
                 style: pw.TextStyle(color: PdfColors.white, fontSize: 9, fontWeight: pw.FontWeight.bold)),
           ),
-          pw.SizedBox(height: 4),
-          pw.Text('KIPINDI: ${periodLabel.toUpperCase()}',
-              style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
-          if (!isOfficial) ...[
-            pw.SizedBox(height: 4),
-            pw.Text('MAKADIRIO TU - BADO HUJAENDESHA PAYROLL RASMI',
-                style: pw.TextStyle(fontSize: 8, color: _pdfRed, fontWeight: pw.FontWeight.bold)),
-          ],
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.end,
+            children: [
+              pw.Text('KIPINDI: ${periodLabel.toUpperCase()}', style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
+              if (!isOfficial) ...[
+                pw.SizedBox(height: 4),
+                pw.Text('MAKADIRIO TU - BADO HUJAENDESHA PAYROLL RASMI',
+                    style: pw.TextStyle(fontSize: 8, color: _pdfRed, fontWeight: pw.FontWeight.bold)),
+              ],
+            ],
+          ),
         ],
       ),
     ],

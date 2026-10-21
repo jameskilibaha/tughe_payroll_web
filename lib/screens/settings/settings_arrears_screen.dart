@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
 
 import '../../controllers/arrears_settings_controller.dart';
@@ -6,6 +6,9 @@ import '../../models/master_arrear_setting.dart';
 import '../../utils/formatters.dart';
 import '../widgets/responsive_header_bar.dart';
 import '../widgets/app_status_views.dart';
+import '../../core/tr_text.dart';
+import '../../core/translations.dart';
+import '../../core/theme.dart';
 
 const _brandBlue = Color(0xFF1E3A8A);
 
@@ -20,17 +23,16 @@ class SettingsArrearsScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             ResponsiveHeaderBar(
-              title: const Text('MASTER SETTINGS: MAKATO (ARREARS)',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: _brandBlue)),
-              subtitle: const Text(
+              title: Text('MASTER SETTINGS: MAKATO (ARREARS)',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Pal.brandText)),
+              subtitle: Text(
                 'Simamia orodha kuu ya makato (arrears/deductions) yatakayotumika '
                 'kuwapangia wafanyakazi — asilimia au kiwango, aina ya kato, na marudio.',
-                style: TextStyle(fontSize: 11, color: Colors.black54),
+                style: TextStyle(fontSize: 11, color: Pal.textSecondary),
               ),
               actions: [
                 ElevatedButton.icon(
                   onPressed: () => _openForm(context, ctrl, null),
-                  style: ElevatedButton.styleFrom(backgroundColor: _brandBlue, foregroundColor: Colors.white),
                   icon: const Icon(Icons.add, size: 16),
                   label: const Text('Ongeza Kato', style: TextStyle(fontSize: 11)),
                 ),
@@ -43,8 +45,8 @@ class SettingsArrearsScreen extends StatelessWidget {
                   : (ctrl.errorMessage.value.isNotEmpty && ctrl.masterArrears.isEmpty)
                       ? AppErrorRetryView(message: ctrl.errorMessage.value, onRetry: ctrl.refreshFromBackend)
                       : ctrl.masterArrears.isEmpty
-                          ? const Center(
-                              child: Text('Hakuna mipangilio ya makato bado.', style: TextStyle(color: Colors.black45)))
+                          ? Center(
+                              child: Text('Hakuna mipangilio ya makato bado.', style: TextStyle(color: Pal.textMuted)))
                           : ListView.separated(
                               itemCount: ctrl.masterArrears.length,
                               separatorBuilder: (_, __) => const SizedBox(height: 8),
@@ -53,9 +55,9 @@ class SettingsArrearsScreen extends StatelessWidget {
                                 return Container(
                                   padding: const EdgeInsets.all(14),
                                   decoration: BoxDecoration(
-                                    color: Colors.white,
+                                    color: Pal.surface,
                                     borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                                    border: Border.all(color: Pal.border),
                                   ),
                                   child: Row(
                                     children: [
@@ -69,23 +71,23 @@ class SettingsArrearsScreen extends StatelessWidget {
                                               Container(
                                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                 decoration:
-                                                    BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(4)),
-                                                child: Text(m.arrearsType, style: const TextStyle(fontSize: 9.5, color: _brandBlue)),
+                                                    BoxDecoration(color: Pal.tint(Colors.blue), borderRadius: BorderRadius.circular(4)),
+                                                child: Text(m.arrearsType, style: TextStyle(fontSize: 9.5, color: Pal.brandText)),
                                               ),
                                             ]),
                                             const SizedBox(height: 4),
                                             Text(
-                                              '${m.deductionType == 'Percent' ? '${m.defaultValue}%' : formatTZS(m.defaultValue)} • ${m.isCreditOrDebit} • ${m.frequency}',
-                                              style: const TextStyle(fontSize: 10.5, color: Colors.black54),
+                                              '${m.deductionType == 'Percent' ? '${m.defaultValue}%' : formatTZS(m.defaultValue)} • ${m.creditDebitLabel} • ${m.frequencyLabel}',
+                                              style: TextStyle(fontSize: 10.5, color: Pal.textSecondary),
                                             ),
                                             if (m.description != null && m.description!.isNotEmpty)
-                                              Text(m.description!, style: const TextStyle(fontSize: 10, color: Colors.black45)),
+                                              Text(m.description!, style: TextStyle(fontSize: 10, color: Pal.textMuted)),
                                           ],
                                         ),
                                       ),
                                       IconButton(
-                                        tooltip: 'Sasisha kwa Wafanyakazi Wote (Sync)',
-                                        icon: Icon(Icons.sync, size: 18, color: Colors.blue.shade700),
+                                        tooltip: tr('Sasisha kwa Wafanyakazi Wote (Sync)'),
+                                        icon: Icon(Icons.sync, size: 18, color: Pal.fg(Colors.blue.shade700)),
                                         onPressed: () => _confirmSync(context, ctrl, m),
                                       ),
                                       IconButton(
@@ -142,12 +144,12 @@ class _ArrearFormDialog extends StatefulWidget {
 
 class _ArrearFormDialogState extends State<_ArrearFormDialog> {
   late final _nameCtrl = TextEditingController(text: widget.existing?.name ?? '');
-  late final _valueCtrl = TextEditingController(text: widget.existing?.defaultValue.toStringAsFixed(0) ?? '0');
+  late final _valueCtrl = TextEditingController(text: plainAmount(widget.existing?.defaultValue ?? 0));
   late final _descCtrl = TextEditingController(text: widget.existing?.description ?? '');
   String _arrearsType = 'Special';
   String _deductionType = 'Percent';
-  String _creditOrDebit = 'Debit';
-  String _frequency = 'Always';
+  bool _isPermanentDeduction = false;
+  bool _isChoice = true;
 
   @override
   void initState() {
@@ -155,8 +157,8 @@ class _ArrearFormDialogState extends State<_ArrearFormDialog> {
     final e = widget.existing;
     _arrearsType = e?.arrearsType ?? 'Special';
     _deductionType = e?.deductionType ?? 'Percent';
-    _creditOrDebit = e?.isCreditOrDebit ?? 'Debit';
-    _frequency = e?.frequency ?? 'Always';
+    _isPermanentDeduction = e?.isPermanentDeduction ?? false;
+    _isChoice = e?.isChoice ?? true;
   }
 
   void _save() {
@@ -167,8 +169,8 @@ class _ArrearFormDialogState extends State<_ArrearFormDialog> {
       arrearsType: _arrearsType,
       deductionType: _deductionType,
       defaultValue: double.tryParse(_valueCtrl.text) ?? 0,
-      isCreditOrDebit: _creditOrDebit,
-      frequency: _frequency,
+      isPermanentDeduction: _isPermanentDeduction,
+      isChoice: _isChoice,
       description: _descCtrl.text.trim(),
       backendId: widget.existing?.backendId,
     );
@@ -189,15 +191,15 @@ class _ArrearFormDialogState extends State<_ArrearFormDialog> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(widget.existing == null ? 'Ongeza Kato Jipya' : 'Hariri Kato',
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: _brandBlue)),
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Pal.brandText)),
                 const SizedBox(height: 12),
-                TextField(controller: _nameCtrl, decoration: const InputDecoration(labelText: 'Jina la Kato', isDense: true)),
+                TextField(controller: _nameCtrl, decoration: InputDecoration(labelText: tr('Jina la Kato'), isDense: true)),
                 const SizedBox(height: 10),
                 Row(children: [
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       value: _arrearsType,
-                      decoration: const InputDecoration(labelText: 'Aina ya Kato', isDense: true),
+                      decoration: InputDecoration(labelText: tr('Aina ya Kato'), isDense: true),
                       items: const ['Special', 'Other']
                           .map((v) => DropdownMenuItem(value: v, child: Text(v, style: const TextStyle(fontSize: 11))))
                           .toList(),
@@ -208,7 +210,7 @@ class _ArrearFormDialogState extends State<_ArrearFormDialog> {
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       value: _deductionType,
-                      decoration: const InputDecoration(labelText: 'Aina ya Deduction', isDense: true),
+                      decoration: InputDecoration(labelText: tr('Aina ya Deduction'), isDense: true),
                       items: const ['Amount', 'Percent', 'Nothing']
                           .map((v) => DropdownMenuItem(value: v, child: Text(v, style: const TextStyle(fontSize: 11))))
                           .toList(),
@@ -220,37 +222,50 @@ class _ArrearFormDialogState extends State<_ArrearFormDialog> {
                 TextField(
                   controller: _valueCtrl,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Kiwango Chaguo-msingi (Default Value)', isDense: true),
+                  decoration: InputDecoration(labelText: tr('Kiwango Chaguo-msingi (Default Value)'), isDense: true),
                 ),
                 const SizedBox(height: 10),
                 Row(children: [
                   Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: _creditOrDebit,
-                      decoration: const InputDecoration(labelText: 'Credit/Debit', isDense: true),
-                      items: const ['Credit', 'Debit']
-                          .map((v) => DropdownMenuItem(value: v, child: Text(v, style: const TextStyle(fontSize: 11))))
-                          .toList(),
-                      onChanged: (v) => setState(() => _creditOrDebit = v!),
+                    child: DropdownButtonFormField<bool>(
+                      value: _isPermanentDeduction,
+                      decoration: InputDecoration(labelText: tr('Credit/Debit'), isDense: true),
+                      items: const [
+                        DropdownMenuItem(value: true, child: Text('Credit & Debit', style: TextStyle(fontSize: 11))),
+                        DropdownMenuItem(value: false, child: Text('Credit', style: TextStyle(fontSize: 11))),
+                      ],
+                      onChanged: (v) => setState(() {
+                        _isPermanentDeduction = v!;
+                        if (v) _deductionType = 'Amount'; // a debt is repaid with a fixed amount each month
+                      }),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: _frequency,
-                      decoration: const InputDecoration(labelText: 'Marudio (Frequency)', isDense: true),
-                      items: const ['Always', 'Ones']
-                          .map((v) => DropdownMenuItem(value: v, child: Text(v, style: const TextStyle(fontSize: 11))))
-                          .toList(),
-                      onChanged: (v) => setState(() => _frequency = v!),
+                    child: DropdownButtonFormField<bool>(
+                      value: _isChoice,
+                      decoration: InputDecoration(labelText: tr('Marudio (Frequency)'), isDense: true),
+                      items: const [
+                        DropdownMenuItem(value: true, child: Text('Daima (Always)', style: TextStyle(fontSize: 11))),
+                        DropdownMenuItem(value: false, child: Text('Mara Moja (Ones)', style: TextStyle(fontSize: 11))),
+                      ],
+                      onChanged: (v) => setState(() => _isChoice = v!),
                     ),
                   ),
                 ]),
+                if (_isPermanentDeduction)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Credit & Debit ni DENI: mfanyakazi anakatwa kila mwezi hadi deni lote lilipwe, kisha makato yanaondolewa yenyewe. Weka Jumla ya Deni na kato la mwezi wakati wa kumpa mfanyakazi.',
+                      style: TextStyle(fontSize: 10.5, color: Pal.textSecondary),
+                    ),
+                  ),
                 const SizedBox(height: 10),
                 TextField(
                   controller: _descCtrl,
                   maxLines: 2,
-                  decoration: const InputDecoration(labelText: 'Maelezo (Description)', isDense: true),
+                  decoration: InputDecoration(labelText: tr('Maelezo (Description)'), isDense: true),
                 ),
                 const SizedBox(height: 16),
                 Row(
@@ -260,7 +275,6 @@ class _ArrearFormDialogState extends State<_ArrearFormDialog> {
                     const SizedBox(width: 8),
                     ElevatedButton(
                       onPressed: _save,
-                      style: ElevatedButton.styleFrom(backgroundColor: _brandBlue, foregroundColor: Colors.white),
                       child: const Text('Hifadhi'),
                     ),
                   ],

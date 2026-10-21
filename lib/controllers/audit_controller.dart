@@ -6,6 +6,7 @@ import '../models/audit_log_entry.dart';
 import '../network/api_exception.dart';
 import '../network/api_service.dart';
 import '../utils/persistence_service.dart';
+import '../core/tr_snack.dart';
 
 class AuditController extends GetxController {
   AuditController({PersistenceService? persistence, ApiService? apiService})
@@ -74,15 +75,29 @@ class AuditController extends GetxController {
     } catch (error) {
       if (error is ApiException && !error.isNetworkError) {
         errorMessage.value = error.message;
-        Get.snackbar('Imeshindwa kupakua kumbukumbu (audit log)', error.message);
+        trSnack('Imeshindwa kupakua kumbukumbu (audit log)', error.message);
       }
     } finally {
       _isRefreshing = false;
     }
   }
 
-  Future<void> _fetchFromBackend() async {
+  /// The screen shows the newest entries only (a busy system records every request, so the whole
+  /// history can be very large); the CSV export asks for everything.
+  static const int screenLimit = 3000;
+
+  /// The WHOLE audit history, newest first - for the CSV export. Throws [ApiException].
+  Future<List<AuditLogEntry>> fetchAllForExport() async {
     final backendList = await _api.searchAuditLogs();
+    return backendList
+        .map((raw) => AuditLogEntry.fromBackendJson(Map<String, dynamic>.from(raw as Map)))
+        .toList()
+        .reversed
+        .toList();
+  }
+
+  Future<void> _fetchFromBackend() async {
+    final backendList = await _api.searchAuditLogs(limit: screenLimit);
     // An empty result is a legitimate answer (a fresh system truly has no
     // history yet) - show it as-is rather than falling back to sample
     // dummy entries, which would misrepresent real audit history.

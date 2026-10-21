@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
 
 import '../../controllers/allowances_settings_controller.dart';
@@ -6,6 +6,9 @@ import '../../models/master_allowance_setting.dart';
 import '../../utils/formatters.dart';
 import '../widgets/responsive_header_bar.dart';
 import '../widgets/app_status_views.dart';
+import '../../core/tr_text.dart';
+import '../../core/translations.dart';
+import '../../core/theme.dart';
 
 const _green = Color(0xFF15803D);
 
@@ -22,10 +25,10 @@ class SettingsAllowancesScreen extends StatelessWidget {
             ResponsiveHeaderBar(
               title: const Text('MASTER SETTINGS: NYONGEZA (ALLOWANCES)',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: _green)),
-              subtitle: const Text(
+              subtitle: Text(
                 'Simamia orodha kuu ya posho (allowances) zitakazotumika kuwapangia '
                 'wafanyakazi — asilimia au kiwango, aina ya posho, na kama ni kwa kila mtu.',
-                style: TextStyle(fontSize: 11, color: Colors.black54),
+                style: TextStyle(fontSize: 11, color: Pal.textSecondary),
               ),
               actions: [
                 ElevatedButton.icon(
@@ -43,8 +46,8 @@ class SettingsAllowancesScreen extends StatelessWidget {
                   : (ctrl.errorMessage.value.isNotEmpty && ctrl.masterAllowances.isEmpty)
                       ? AppErrorRetryView(message: ctrl.errorMessage.value, onRetry: ctrl.refreshFromBackend)
                       : ctrl.masterAllowances.isEmpty
-                          ? const Center(
-                              child: Text('Hakuna mipangilio ya posho bado.', style: TextStyle(color: Colors.black45)))
+                          ? Center(
+                              child: Text('Hakuna mipangilio ya posho bado.', style: TextStyle(color: Pal.textMuted)))
                           : ListView.separated(
                               itemCount: ctrl.masterAllowances.length,
                               separatorBuilder: (_, __) => const SizedBox(height: 8),
@@ -53,9 +56,9 @@ class SettingsAllowancesScreen extends StatelessWidget {
                                 return Container(
                                   padding: const EdgeInsets.all(14),
                                   decoration: BoxDecoration(
-                                    color: Colors.white,
+                                    color: Pal.surface,
                                     borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                                    border: Border.all(color: Pal.border),
                                   ),
                                   child: Row(
                                     children: [
@@ -69,15 +72,24 @@ class SettingsAllowancesScreen extends StatelessWidget {
                                               Container(
                                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                 decoration:
-                                                    BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(4)),
-                                                child: Text(m.allowanceType, style: TextStyle(fontSize: 9.5, color: Colors.green.shade800)),
+                                                    BoxDecoration(color: Pal.tint(Colors.green), borderRadius: BorderRadius.circular(4)),
+                                                child: Text(m.allowanceType, style: TextStyle(fontSize: 9.5, color: Pal.fg(Colors.green.shade800))),
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                    color: m.isTaxable ? Pal.tint(Colors.deepOrange) : Pal.surfaceAlt,
+                                                    borderRadius: BorderRadius.circular(4)),
+                                                child: Text(m.isTaxable ? 'Inatozwa kodi' : 'Haitozwi kodi',
+                                                    style: TextStyle(fontSize: 9.5, color: m.isTaxable ? Pal.fg(Colors.deepOrange.shade700) : Pal.textMuted)),
                                               ),
                                               if (m.isForEveryone) ...[
                                                 const SizedBox(width: 6),
                                                 Container(
                                                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                   decoration: BoxDecoration(
-                                                      color: Colors.amber.shade50, borderRadius: BorderRadius.circular(4)),
+                                                      color: Pal.tint(Colors.amber), borderRadius: BorderRadius.circular(4)),
                                                   child: const Text('Kila Mtu', style: TextStyle(fontSize: 9.5, color: Colors.amber)),
                                                 ),
                                               ],
@@ -85,16 +97,16 @@ class SettingsAllowancesScreen extends StatelessWidget {
                                             const SizedBox(height: 4),
                                             Text(
                                               m.additionType == 'Percent' ? '${m.defaultValue}%' : formatTZS(m.defaultValue),
-                                              style: const TextStyle(fontSize: 10.5, color: Colors.black54),
+                                              style: TextStyle(fontSize: 10.5, color: Pal.textSecondary),
                                             ),
                                             if (m.description != null && m.description!.isNotEmpty)
-                                              Text(m.description!, style: const TextStyle(fontSize: 10, color: Colors.black45)),
+                                              Text(m.description!, style: TextStyle(fontSize: 10, color: Pal.textMuted)),
                                           ],
                                         ),
                                       ),
                                       IconButton(
-                                        tooltip: 'Sasisha kwa Wafanyakazi Wote (Sync)',
-                                        icon: Icon(Icons.sync, size: 18, color: Colors.blue.shade700),
+                                        tooltip: tr('Sasisha kwa Wafanyakazi Wote (Sync)'),
+                                        icon: Icon(Icons.sync, size: 18, color: Pal.fg(Colors.blue.shade700)),
                                         onPressed: () => _confirmSync(context, ctrl, m),
                                       ),
                                       IconButton(
@@ -151,11 +163,12 @@ class _AllowanceFormDialog extends StatefulWidget {
 
 class _AllowanceFormDialogState extends State<_AllowanceFormDialog> {
   late final _nameCtrl = TextEditingController(text: widget.existing?.name ?? '');
-  late final _valueCtrl = TextEditingController(text: widget.existing?.defaultValue.toStringAsFixed(0) ?? '0');
+  late final _valueCtrl = TextEditingController(text: plainAmount(widget.existing?.defaultValue ?? 0));
   late final _descCtrl = TextEditingController(text: widget.existing?.description ?? '');
   String _allowanceType = 'Special';
   String _additionType = 'Percent';
   bool _isForEveryone = true;
+  bool _isTaxable = true; // most allowances (housing, ...) are part of the income PAYE is charged on
 
   @override
   void initState() {
@@ -164,6 +177,7 @@ class _AllowanceFormDialogState extends State<_AllowanceFormDialog> {
     _allowanceType = e?.allowanceType ?? 'Special';
     _additionType = e?.additionType ?? 'Percent';
     _isForEveryone = e?.isForEveryone ?? true;
+    _isTaxable = e?.isTaxable ?? true;
   }
 
   void _save() {
@@ -175,6 +189,7 @@ class _AllowanceFormDialogState extends State<_AllowanceFormDialog> {
       additionType: _additionType,
       defaultValue: double.tryParse(_valueCtrl.text) ?? 0,
       isForEveryone: _isForEveryone,
+      isTaxable: _isTaxable,
       description: _descCtrl.text.trim(),
       backendId: widget.existing?.backendId,
     );
@@ -197,13 +212,13 @@ class _AllowanceFormDialogState extends State<_AllowanceFormDialog> {
                 Text(widget.existing == null ? 'Ongeza Posho Mpya' : 'Hariri Posho',
                     style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: _green)),
                 const SizedBox(height: 12),
-                TextField(controller: _nameCtrl, decoration: const InputDecoration(labelText: 'Jina la Posho', isDense: true)),
+                TextField(controller: _nameCtrl, decoration: InputDecoration(labelText: tr('Jina la Posho'), isDense: true)),
                 const SizedBox(height: 10),
                 Row(children: [
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       value: _allowanceType,
-                      decoration: const InputDecoration(labelText: 'Aina ya Posho', isDense: true),
+                      decoration: InputDecoration(labelText: tr('Aina ya Posho'), isDense: true),
                       items: const ['Special', 'Other']
                           .map((v) => DropdownMenuItem(value: v, child: Text(v, style: const TextStyle(fontSize: 11))))
                           .toList(),
@@ -214,7 +229,7 @@ class _AllowanceFormDialogState extends State<_AllowanceFormDialog> {
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       value: _additionType,
-                      decoration: const InputDecoration(labelText: 'Aina ya Nyongeza', isDense: true),
+                      decoration: InputDecoration(labelText: tr('Aina ya Nyongeza'), isDense: true),
                       items: const ['Amount', 'Percent']
                           .map((v) => DropdownMenuItem(value: v, child: Text(v, style: const TextStyle(fontSize: 11))))
                           .toList(),
@@ -226,7 +241,7 @@ class _AllowanceFormDialogState extends State<_AllowanceFormDialog> {
                 TextField(
                   controller: _valueCtrl,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Kiwango Chaguo-msingi (Default Value)', isDense: true),
+                  decoration: InputDecoration(labelText: tr('Kiwango Chaguo-msingi (Default Value)'), isDense: true),
                 ),
                 const SizedBox(height: 6),
                 SwitchListTile(
@@ -235,10 +250,22 @@ class _AllowanceFormDialogState extends State<_AllowanceFormDialog> {
                   value: _isForEveryone,
                   onChanged: (v) => setState(() => _isForEveryone = v),
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Inatozwa Kodi (PAYE)', style: TextStyle(fontSize: 12)),
+                  subtitle: Text(
+                    _isTaxable
+                        ? 'Posho hii inaingia kwenye mapato yanayotozwa kodi ya PAYE.'
+                        : 'Posho hii inaongezwa baada ya kodi (haitozwi PAYE).',
+                    style: TextStyle(fontSize: 10.5, color: Pal.textMuted),
+                  ),
+                  value: _isTaxable,
+                  onChanged: (v) => setState(() => _isTaxable = v),
+                ),
                 TextField(
                   controller: _descCtrl,
                   maxLines: 2,
-                  decoration: const InputDecoration(labelText: 'Maelezo (Description)', isDense: true),
+                  decoration: InputDecoration(labelText: tr('Maelezo (Description)'), isDense: true),
                 ),
                 const SizedBox(height: 16),
                 Row(

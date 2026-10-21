@@ -9,6 +9,7 @@ class MasterAllowanceSetting {
     required this.additionType,
     required this.defaultValue,
     required this.isForEveryone,
+    this.isTaxable = false,
     this.description,
     this.backendId,
   });
@@ -19,6 +20,9 @@ class MasterAllowanceSetting {
   final String additionType;
   final double defaultValue; // Amount or Percent
   final bool isForEveryone;
+
+  /// Part of the income PAYE is worked out on (housing, ...) - or added after tax (false).
+  final bool isTaxable;
   final String? description;
 
   /// Real numeric primary key from the backend (`tughe/allowance/model.py`).
@@ -33,6 +37,7 @@ class MasterAllowanceSetting {
     String? additionType,
     double? defaultValue,
     bool? isForEveryone,
+    bool? isTaxable,
     String? description,
     int? backendId,
   }) {
@@ -43,6 +48,7 @@ class MasterAllowanceSetting {
       additionType: additionType ?? this.additionType,
       defaultValue: defaultValue ?? this.defaultValue,
       isForEveryone: isForEveryone ?? this.isForEveryone,
+      isTaxable: isTaxable ?? this.isTaxable,
       description: description ?? this.description,
       backendId: backendId ?? this.backendId,
     );
@@ -55,6 +61,7 @@ class MasterAllowanceSetting {
         additionType: json['additionType'] as String? ?? 'Amount',
         defaultValue: (json['defaultValue'] as num?)?.toDouble() ?? 0,
         isForEveryone: json['isForEveryone'] as bool? ?? false,
+        isTaxable: json['isTaxable'] as bool? ?? false,
         description: json['description'] as String?,
         backendId: (json['backendId'] as num?)?.toInt(),
       );
@@ -66,6 +73,7 @@ class MasterAllowanceSetting {
         'additionType': additionType,
         'defaultValue': defaultValue,
         'isForEveryone': isForEveryone,
+        'isTaxable': isTaxable,
         'description': description,
         'backendId': backendId,
       };
@@ -83,6 +91,7 @@ class MasterAllowanceSetting {
       additionType: model == 'PERCENT' ? 'Percent' : 'Amount',
       defaultValue: (json['percentOrAmount'] as num?)?.toDouble() ?? 0,
       isForEveryone: json['isForEverOne'] as bool? ?? false,
+      isTaxable: json['isTaxable'] as bool? ?? false,
       description: previous?.description,
     );
   }

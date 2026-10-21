@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import '../models/assigned_arrear.dart';
 import '../models/employee.dart';
 import '../models/tra_salary_term.dart';
 import '../models/payroll_calculation_result.dart';
@@ -30,7 +31,7 @@ double calculateTRAPayeTax(double taxableAmount, List<TRASalaryTerm> traTerms) {
       final excess = taxableAmount - term.minSalary;
       final taxOnExcess = (excess * term.percentage) / 100;
       final totalTax = term.additionAmount + taxOnExcess;
-      return math.max(0, totalTax.roundToDouble());
+      return math.max(0, q3(totalTax));
     }
   }
 
@@ -39,11 +40,15 @@ double calculateTRAPayeTax(double taxableAmount, List<TRASalaryTerm> traTerms) {
   if (taxableAmount > lastTerm.minSalary) {
     final excess = taxableAmount - lastTerm.minSalary;
     final taxOnExcess = (excess * lastTerm.percentage) / 100;
-    return (lastTerm.additionAmount + taxOnExcess).roundToDouble();
+    return q3(lastTerm.additionAmount + taxOnExcess);
   }
 
   return 0;
 }
+
+/// Exactly 3 decimal places (half up) - the same precision the server stores,
+/// so the on-screen estimate matches the official payroll to the last digit.
+double q3(double v) => double.parse(v.toStringAsFixed(3));
 
 /// Full payroll calculator for a single employee.
 /// pensionRate: Standard NSSF/PSSSF contribution rate (default 10%).
@@ -67,18 +72,26 @@ PayrollCalculationResult calculateEmployeePayroll(
       } else if (allowance.additionType == 'Percent') {
         amount = (basicSalary * allowance.value) / 100;
       }
+      amount = q3(amount);
       totalAllowances += amount;
-      allowanceDetails.add(AllowanceDetail(name: allowance.name, amount: amount.roundToDouble()));
+      allowanceDetails.add(AllowanceDetail(name: allowance.name, amount: amount));
     }
   }
 
-  final grossSalary = basicSalary + totalAllowances;
+  totalAllowances = q3(totalAllowances);
+  final grossSalary = q3(basicSalary + totalAllowances);
 
-  // Statutory pension (NSSF/PSSSF)
-  final nssfDeduction = ((basicSalary * pensionRate) / 100).roundToDouble();
+  // (A) Statutory pension (NSSF/PSSSF): a percent of the BASIC salary. The rate
+  // of the employee's "NSSF" arrear is used when present, else the standard 10%.
+  var nssfRate = pensionRate;
+  for (final a in employee.arrearsList ?? const <AssignedArrear>[]) {
+    if (a.name.trim().toUpperCase() == 'NSSF' && a.deductionType == 'Percent') nssfRate = a.value;
+  }
+  final nssfDeduction = q3((basicSalary * nssfRate) / 100);
 
-  // Taxable salary = Gross - Pension
-  final taxableSalary = math.max(0, grossSalary - nssfDeduction).toDouble();
+  // (B) PAYE is charged on the basic salary AFTER NSSF - allowances are added
+  // afterwards (same order as the official payroll run on the server).
+  final taxableSalary = q3(math.max(0, basicSalary - nssfDeduction).toDouble());
 
   // TRA PAYE Tax
   final traPayeTax = calculateTRAPayeTax(taxableSalary, terms);
@@ -89,6 +102,9 @@ PayrollCalculationResult calculateEmployeePayroll(
 
   if (employee.arrearsList != null && employee.arrearsList!.isNotEmpty) {
     for (final arrear in employee.arrearsList!) {
+      // NSSF / TRA are taken in steps (A) and (B) above - never twice.
+      final upper = arrear.name.trim().toUpperCase();
+      if (upper == 'NSSF' || upper == 'TRA') continue;
       var amount = 0.0;
       if (arrear.deductionType == 'Amount') {
         amount = arrear.value;
@@ -96,22 +112,27 @@ PayrollCalculationResult calculateEmployeePayroll(
         amount = (basicSalary * arrear.value) / 100;
       }
 
-      if (arrear.isDebtReduction && arrear.remainingDebtAmount != null) {
-        amount = math.min(amount, arrear.remainingDebtAmount!);
+      if (arrear.isDebtReduction) {
+        // A debt: only the unpaid balance is taken, and nothing once it is repaid.
+        final balance = arrear.remainingDebtAmount ?? arrear.totalDebtAmount ?? amount;
+        if (balance <= 0) continue;
+        amount = math.min(amount, balance);
       }
 
+      amount = q3(amount);
       totalOtherDeductions += amount;
       arrearsDetails.add(ArrearDetail(
         name: arrear.name,
-        amount: amount.roundToDouble(),
+        amount: amount,
         isDebt: arrear.isDebtReduction,
         remaining: arrear.remainingDebtAmount != null ? arrear.remainingDebtAmount! - amount : null,
       ));
     }
   }
 
-  final totalDeductions = nssfDeduction + traPayeTax + totalOtherDeductions;
-  final netSalary = math.max(0, grossSalary - totalDeductions).toDouble();
+  totalOtherDeductions = q3(totalOtherDeductions);
+  final totalDeductions = q3(nssfDeduction + traPayeTax + totalOtherDeductions);
+  final netSalary = q3(math.max(0, grossSalary - totalDeductions).toDouble());
 
   return PayrollCalculationResult(
     employeeId: employee.id,

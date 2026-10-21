@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
 
 import '../controllers/allowances_settings_controller.dart';
@@ -7,8 +7,14 @@ import '../controllers/employee_controller.dart';
 import '../controllers/navigation_controller.dart';
 import '../controllers/payroll_controller.dart';
 import '../models/employee.dart';
+import '../models/master_arrear_setting.dart';
 import '../utils/formatters.dart';
+import 'widgets/live_payroll_panel.dart';
+import 'widgets/period_status_card.dart';
 import 'widgets/responsive_header_bar.dart';
+import '../core/tr_text.dart';
+import '../core/translations.dart';
+import '../core/theme.dart';
 
 const _brandBlue = Color(0xFF1E3A8A);
 const _green700 = Color(0xFF15803D);
@@ -29,6 +35,106 @@ class RunPayrollScreen extends StatefulWidget {
 class _RunPayrollScreenState extends State<RunPayrollScreen> {
   late String _monthYear = _defaultMonthYear();
   final Set<int> _selectedIds = {};
+
+  /// Is the live-payroll pop-up on screen right now?
+  bool _liveDialogOpen = false;
+
+  /// Shows the live view as a pop-up (once). The run continues if the pop-up is hidden.
+  Future<void> _openLiveDialog() async {
+    if (_liveDialogOpen || !mounted) return;
+    setState(() => _liveDialogOpen = true);
+    await showLivePayrollDialog(context, Get.find<PayrollController>());
+    if (mounted) setState(() => _liveDialogOpen = false);
+  }
+
+  /// "Mara Moja" (once) arrears: master arrears id -> deduct this month?
+  final Map<int, bool> _onceDeduct = {};
+
+  /// master arrears id -> TZS amount typed by the admin (empty = each employee's own value)
+  final Map<int, TextEditingController> _onceAmount = {};
+
+  /// Default text of the amount box: the master arrear's default TZS value
+  /// (percent arrears start empty - each employee is charged their own %).
+  static String _defaultAmountText(MasterArrearSetting m) {
+    if (m.deductionType == 'Percent' || m.defaultValue <= 0) return '';
+    return plainAmount(m.defaultValue);
+  }
+
+  TextEditingController _amountCtrl(MasterArrearSetting m) =>
+      _onceAmount.putIfAbsent(m.backendId!, () => TextEditingController(text: _defaultAmountText(m)));
+
+  /// The amount to FORCE for everyone, or null when the admin left the default
+  /// (each employee is then charged their own assigned value).
+  double? _amountOverride(MasterArrearSetting m) {
+    final text = _onceOnce(m.backendId!).trim().replaceAll(',', '');
+    if (text.isEmpty) return null;
+    final value = double.tryParse(text);
+    if (value == null) return null;
+    if (m.deductionType != 'Percent' && value == m.defaultValue) return null; // untouched default
+    return value;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // If a payroll run is still going on the server (e.g. the page was refreshed),
+    // re-attach to it and keep showing its live progress.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final ctrl = Get.find<PayrollController>();
+      await ctrl.resumeIfRunning();
+      if (mounted && ctrl.liveRunning) _openLiveDialog();
+    });
+  }
+
+  @override
+  void dispose() {
+    for (final c in _onceAmount.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  List<MasterArrearSetting> _onceArrears() => Get.find<ArrearsSettingsController>()
+      .masterArrears
+      .where((m) => !m.isChoice && m.backendId != null)
+      .toList();
+
+  /// The payload sent to the backend for every once-arrear.
+  List<Map<String, dynamic>> _onceArrearsPayload() {
+    return _onceArrears().map((m) {
+      final id = m.backendId!;
+      final deduct = _onceDeduct[id] ?? true; // default: deducted
+      return {'arrearsId': id, 'deduct': deduct, 'amount': deduct ? _amountOverride(m) : null};
+    }).toList();
+  }
+
+  String _onceOnce(int id) => _onceAmount[id]?.text ?? '';
+
+  String _onceSummary() {
+    final taken = <String>[];
+    final skipped = <String>[];
+    for (final m in _onceArrears()) {
+      final id = m.backendId!;
+      if (!(_onceDeduct[id] ?? true)) {
+        skipped.add('• ${m.name}');
+        continue;
+      }
+      final override = _amountOverride(m);
+      final how = override != null
+          ? formatTZS(override)
+          : (m.deductionType == 'Percent'
+              ? '${m.defaultValue}% ya mshahara wa kila mfanyakazi'
+              : '${formatTZS(m.defaultValue)} (chaguo-msingi)');
+      taken.add('• ${m.name}: $how');
+    }
+    final b = StringBuffer();
+    if (taken.isNotEmpty) b.write('Makato ya mara moja yatakayokatwa:\n${taken.join('\n')}');
+    if (skipped.isNotEmpty) {
+      if (b.isNotEmpty) b.write('\n\n');
+      b.write('Hayatakatwa mwezi huu:\n${skipped.join('\n')}');
+    }
+    return b.isEmpty ? 'Hakuna kato la mara moja.' : b.toString();
+  }
 
   static String _defaultMonthYear() {
     final now = DateTime.now();
@@ -85,11 +191,17 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
         : '${_selectedIds.length} wafanyakazi uliowachagua';
     final ok = await _confirm(
       title: 'Thibitisha Kuendesha Payroll',
-      message: 'Utaendesha payroll ya ${_label(_monthYear)} kwa $scope. Endelea?',
+      message: 'Utaendesha payroll ya ${_label(_monthYear)} kwa $scope.\n\n${_onceSummary()}\n\nEndelea?',
       color: _green700,
     );
     if (!ok) return;
-    await payrollCtrl.generate(monthYear: _monthYear, employeeIds: _selectedIds.toList());
+    // Runs in the background on the server and streams its progress live (WebSocket).
+    final started = await payrollCtrl.generateLive(
+      monthYear: _monthYear,
+      employeeIds: _selectedIds.toList(),
+      onceArrears: _onceArrearsPayload(),
+    );
+    if (started && mounted) _openLiveDialog(); // live progress as a pop-up
   }
 
   Future<void> _reversePayroll(PayrollController payrollCtrl, int eligibleCount) async {
@@ -110,6 +222,73 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
   /// CURRENT value - e.g. NSSF's contribution rate - so the admin can spot
   /// and fix a rate that changed this month (up or down) BEFORE running
   /// payroll, instead of finding out after the fact.
+  /// Arrears with frequency "Mara Moja": the admin decides, BEFORE running
+  /// payroll, whether each one is deducted this month and how much (TZS).
+  Widget _onceArrearsCard() {
+    return Obx(() {
+      final list = _onceArrears();
+      if (list.isEmpty) return const SizedBox.shrink();
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Pal.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Pal.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('3. Makato ya Mara Moja (Ones) - Yakatwe Mwezi Huu?',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            const SizedBox(height: 4),
+            Text(
+              'Makato haya yamechaguliwa kwa chaguo-msingi (kiasi chake cha kawaida). Unaweza kuondoa tiki ili lisikatwe mwezi huu, au kubadilisha kiasi (TZS) kikatwe kwa wote. Ukifuta kiasi, kila mfanyakazi anakatwa kiasi chake alichowekewa.',
+              style: TextStyle(fontSize: 10.5, color: Pal.textMuted),
+            ),
+            const SizedBox(height: 10),
+            ...list.map((m) {
+              final id = m.backendId!;
+              final on = _onceDeduct[id] ?? true;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Checkbox(
+                      value: on,
+                      onChanged: (v) => setState(() => _onceDeduct[id] = v ?? false),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Text(
+                        '${m.name}  •  ${m.deductionType == 'Percent' ? '${m.defaultValue}%' : formatTZS(m.defaultValue)}',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: _amountCtrl(m),
+                        enabled: on,
+                        keyboardType: TextInputType.number,
+                        style: const TextStyle(fontSize: 12),
+                        decoration: InputDecoration(
+                          labelText: tr('Kiasi cha kukata (TZS)'),
+                          hintText: tr('tupu = kiasi cha kila mfanyakazi'),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      );
+    });
+  }
+
   Widget _variableRatesReviewCard() {
     return Obx(() {
       final arrears = Get.find<ArrearsSettingsController>()
@@ -126,7 +305,7 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.amber.shade50,
+          color: Pal.tint(Colors.amber),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: Colors.amber.shade200),
         ),
@@ -134,7 +313,7 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
-              Icon(Icons.fact_check_outlined, size: 16, color: Colors.amber.shade900),
+              Icon(Icons.fact_check_outlined, size: 16, color: Pal.fg(Colors.amber.shade900)),
               const SizedBox(width: 8),
               const Expanded(
                 child: Text('KAGUA KWANZA: Makato/Posho Yanayoweza Kubadilika Kila Mwezi (SPECIAL)',
@@ -145,7 +324,7 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
             Text(
               'Mfano NSSF/mchango - hakikisha thamani hizi ni sahihi kwa mwezi huu KABLA ya kuendesha payroll. '
               'Ukibadilisha, tumia kitufe cha "Sasisha kwa Wote" kwenye Settings ili zibadilike kwa wote mara moja.',
-              style: TextStyle(fontSize: 10.5, color: Colors.amber.shade900),
+              style: TextStyle(fontSize: 10.5, color: Pal.fg(Colors.amber.shade900)),
             ),
             const SizedBox(height: 10),
             Wrap(
@@ -183,7 +362,7 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
   Widget _rateChip(String name, String value) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.amber.shade300)),
+      decoration: BoxDecoration(color: Pal.surface, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.amber.shade300)),
       child: Text('$name: $value', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
     );
   }
@@ -197,10 +376,10 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ResponsiveHeaderBar(
-          title: const Text('Endesha Payroll (Run Payroll)',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _brandBlue)),
-          subtitle: const Text('Chagua mwezi na wafanyakazi, kisha endesha au batilisha payroll',
-              style: TextStyle(fontSize: 12, color: Colors.black54)),
+          title: Text('Endesha Payroll (Run Payroll)',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Pal.brandText)),
+          subtitle: Text('Chagua mwezi na wafanyakazi, kisha endesha au batilisha payroll',
+              style: TextStyle(fontSize: 12, color: Pal.textSecondary)),
         ),
         const SizedBox(height: 16),
         Expanded(
@@ -214,9 +393,9 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Pal.surface,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    border: Border.all(color: Pal.border),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -226,7 +405,7 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
                       const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
                         value: _monthYear,
-                        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+                        decoration: const InputDecoration(isDense: true),
                         items: _monthOptions()
                             .map((m) => DropdownMenuItem(value: m, child: Text(_label(m))))
                             .toList(),
@@ -236,6 +415,9 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
+                PeriodStatusCard(month: _monthYear),
+                _onceArrearsCard(),
+                const SizedBox(height: 16),
 
                 // Employee selection
                 Obx(() {
@@ -243,9 +425,9 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
                   return Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: Pal.surface,
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      border: Border.all(color: Pal.border),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -259,14 +441,14 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
                               _selectedIds.isEmpty
                                   ? 'Wote (${eligible.length})'
                                   : '${_selectedIds.length} / ${eligible.length} wamechaguliwa',
-                              style: const TextStyle(fontSize: 11, color: Colors.black54),
+                              style: TextStyle(fontSize: 11, color: Pal.textSecondary),
                             ),
                           ],
                         ),
                         const SizedBox(height: 4),
-                        const Text(
+                        Text(
                           'Usipochagua yeyote, payroll itaendeshwa kwa wafanyakazi WOTE walio hai wenye taarifa za mshahara.',
-                          style: TextStyle(fontSize: 10.5, color: Colors.black45),
+                          style: TextStyle(fontSize: 10.5, color: Pal.textMuted),
                         ),
                         const SizedBox(height: 10),
                         Row(
@@ -288,11 +470,11 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
                         ),
                         const Divider(height: 20),
                         if (eligible.isEmpty)
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.symmetric(vertical: 12),
                             child: Text(
                               'Hakuna mfanyakazi mwenye Hali ya Mshahara iliyowekwa bado. Weka "Hali ya Mshahara" kwa wafanyakazi kabla ya kuendesha payroll.',
-                              style: TextStyle(color: Colors.black45, fontSize: 11.5),
+                              style: TextStyle(color: Pal.textMuted, fontSize: 11.5),
                             ),
                           )
                         else
@@ -318,7 +500,7 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
                                   title: Text(e.fullName, style: const TextStyle(fontSize: 12.5)),
                                   subtitle: Text(
                                     '${e.id} • ${e.salaryStatus?.occupation ?? '-'}',
-                                    style: const TextStyle(fontSize: 10.5, color: Colors.black45),
+                                    style: TextStyle(fontSize: 10.5, color: Pal.textMuted),
                                   ),
                                   controlAffinity: ListTileControlAffinity.leading,
                                 );
@@ -370,6 +552,13 @@ class _RunPayrollScreenState extends State<RunPayrollScreen> {
                 }),
                 const SizedBox(height: 16),
 
+                // Live progress of the run (also re-attaches after a page refresh)
+                // Slim status bar while the pop-up is hidden/after it was closed mid-run
+                if (!_liveDialogOpen) ...[
+                  LivePayrollStrip(controller: payrollCtrl, onOpen: _openLiveDialog),
+                  const SizedBox(height: 16),
+                ],
+
                 // Result
                 Obx(() {
                   final result = payrollCtrl.lastResult.value;
@@ -397,7 +586,7 @@ class _ResultCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: isGenerate ? Colors.green.shade50 : Colors.orange.shade50,
+        color: isGenerate ? Pal.tint(Colors.green) : Pal.tint(Colors.orange),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: isGenerate ? Colors.green.shade200 : Colors.orange.shade200),
       ),
@@ -411,20 +600,30 @@ class _ResultCard extends StatelessWidget {
           const SizedBox(height: 10),
           if (isGenerate) ...[
             Text('Wafanyakazi waliofanikiwa: ${result['employeesProcessed'] ?? 0}',
-                style: const TextStyle(fontSize: 12, color: _green700, fontWeight: FontWeight.w600)),
+                style: TextStyle(fontSize: 12, color: Pal.fg(_green700), fontWeight: FontWeight.w600)),
             Text('Wafanyakazi waliokwisha kufanyiwa (waliorukwa): ${result['employeesAlreadyDone'] ?? 0}',
                 style: const TextStyle(fontSize: 12, color: Colors.blueGrey)),
             Text('Wafanyakazi wenye matatizo: ${result['employeesWithProblems'] ?? 0}',
                 style: TextStyle(
                     fontSize: 12,
-                    color: (result['employeesWithProblems'] ?? 0) > 0 ? _red700 : Colors.black54)),
+                    color: (result['employeesWithProblems'] ?? 0) > 0 ? Pal.fg(_red700) : Pal.textSecondary)),
+            if ((result['debtsCleared'] as List?)?.isNotEmpty ?? false) ...[
+              const SizedBox(height: 8),
+              const Text('Madeni yaliyokwisha mwezi huu (makato yameondolewa):',
+                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+              ...((result['debtsCleared'] as List).map((d) => Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('• ${d['employee']}: ${(d['debts'] as List).join(', ')}',
+                        style: TextStyle(fontSize: 11, color: Pal.fg(Colors.teal.shade700))),
+                  ))),
+            ],
             if ((result['problems'] as List?)?.isNotEmpty ?? false) ...[
               const SizedBox(height: 8),
               const Text('Maelezo ya matatizo:', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
               ...((result['problems'] as List).map((p) => Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text('• employeeStatus_id ${p['employeeStatus_id']}: ${p['detail']}',
-                        style: const TextStyle(fontSize: 11, color: Colors.black54)),
+                        style: TextStyle(fontSize: 11, color: Pal.textSecondary)),
                   ))),
             ],
           ] else ...[

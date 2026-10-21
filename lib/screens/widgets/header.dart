@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 
@@ -9,6 +9,9 @@ import '../../core/i18n.dart';
 import '../../core/theme.dart';
 import '../../network/api_service.dart';
 import 'editable_avatar.dart';
+import 'tughe_logo.dart';
+import '../../core/tr_text.dart';
+import '../../core/translations.dart';
 
 const _brandBlue = Color(0xFF1E3A8A);
 
@@ -42,12 +45,7 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
                   onTap: () => nav.goTo('dashboard'),
                   child: Row(
                     children: [
-                      Container(
-                        width: 36, height: 36,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(6)),
-                        child: const Text('T', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: _brandBlue)),
-                      ),
+                      const TugheLogo(size: 40, radius: 8),
                       const SizedBox(width: 12),
                       if (!isNarrow)
                         Column(
@@ -162,7 +160,7 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
                             size: 18, color: Colors.white70),
                       ),
                       IconButton(
-                        tooltip: 'Toka kwenye Mfumo (Sign Out)',
+                        tooltip: tr('Toka kwenye Mfumo (Sign Out)'),
                         onPressed: () => auth.logout(),
                         icon: const Icon(Icons.logout, size: 18, color: Colors.white70),
                       ),

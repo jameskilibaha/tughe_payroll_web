@@ -8,6 +8,7 @@ import '../network/api_exception.dart';
 import '../network/api_service.dart';
 import '../utils/persistence_service.dart';
 import 'employee_controller.dart';
+import '../core/tr_snack.dart';
 
 class ArrearsSettingsController extends GetxController {
   ArrearsSettingsController({PersistenceService? persistence, ApiService? apiService})
@@ -76,7 +77,7 @@ class ArrearsSettingsController extends GetxController {
     } catch (error) {
       if (error is ApiException && !error.isNetworkError) {
         errorMessage.value = error.message;
-        Get.snackbar('Imeshindwa kupakua mipangilio ya deni', error.message);
+        trSnack('Imeshindwa kupakua mipangilio ya deni', error.message);
       }
     } finally {
       _isRefreshing = false;
@@ -118,6 +119,8 @@ class ArrearsSettingsController extends GetxController {
       key: setting.arrearsType.toUpperCase(),
       deductionModel: setting.deductionType.toUpperCase(),
       percentOrAmount: setting.defaultValue,
+      isPermanentDeduction: setting.isPermanentDeduction,
+      isChoice: setting.isChoice,
     )
         .then((created) {
       final i = masterArrears.indexWhere((m) => m.id == setting.id);
@@ -126,7 +129,7 @@ class ArrearsSettingsController extends GetxController {
         unawaited(_persist());
       }
     }).catchError((error) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kuhifadhi mpangilio wa deni (${setting.name}).');
     });
   }
@@ -142,7 +145,7 @@ class ArrearsSettingsController extends GetxController {
     // for master arrears settings), which is the correct behaviour anyway
     // since employees may already reference this setting historically.
     _api.blockArrearSetting(backendId).catchError((error) {
-      Get.snackbar('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kufuta mpangilio.');
+      trSnack('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kufuta mpangilio.');
     });
   }
 
@@ -161,13 +164,13 @@ class ArrearsSettingsController extends GetxController {
   Future<void> syncSettingToEmployees(MasterArrearSetting setting) async {
     final backendId = setting.backendId;
     if (backendId == null) {
-      Get.snackbar('Haiwezekani', 'Mpangilio huu bado haujahifadhiwa kwenye seva.');
+      trSnack('Haiwezekani', 'Mpangilio huu bado haujahifadhiwa kwenye seva.');
       return;
     }
     try {
       final result = await _api.syncArrearSettingToEmployees(backendId);
       final count = (result['employeesUpdated'] as num?)?.toInt() ?? 0;
-      Get.snackbar('Imefanikiwa',
+      trSnack('Imefanikiwa',
           'Wafanyakazi $count wamesasishwa na thamani mpya ya "${setting.name}".');
       // The sync happened server-side, but EmployeeController's cached
       // employee data (arrearsList amounts) is now stale until refetched -
@@ -177,7 +180,7 @@ class ArrearsSettingsController extends GetxController {
         unawaited(Get.find<EmployeeController>().refreshFromBackend());
       }
     } catch (error) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kusasisha wafanyakazi.');
     }
   }

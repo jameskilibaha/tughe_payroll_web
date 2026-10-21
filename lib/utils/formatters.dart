@@ -1,10 +1,26 @@
 import 'package:intl/intl.dart';
 
-/// Formats an amount as Tanzanian Shillings, e.g. "TZS 2,200,000".
-String formatTZS(num amount) {
-  final formatter = NumberFormat.decimalPattern('en_US');
-  return 'TZS ${formatter.format(amount.round())}';
+/// Every money amount in the app is shown with EXACTLY 3 decimal places and is
+/// never rounded to whole shillings (the server computes with exact decimal
+/// arithmetic, see tughe/payroll/money.py).
+final NumberFormat _amountFormat = NumberFormat('#,##0.000', 'en_US');
+
+/// "1,234,567.891" - an amount without currency.
+String formatAmount(num amount) => _amountFormat.format(amount);
+
+/// Formats an amount as Tanzanian Shillings, e.g. "TZS 2,200,000.000".
+String formatTZS(num amount) => 'TZS ${_amountFormat.format(amount)}';
+
+/// Plain editable text of a number (for input boxes): all its decimals up to 3,
+/// without grouping or trailing zeros - 1234567.891, 25000, 7.5.
+String plainAmount(num value) {
+  final text = value.toStringAsFixed(3);
+  if (!text.contains('.')) return text;
+  return text.replaceFirst(RegExp(r'\.?0+$'), '');
 }
+
+/// Percent / share with 3 decimals, e.g. "33.333%".
+String formatPercent(num value) => '${value.toStringAsFixed(3)}%';
 
 /// Formats an ISO date string (YYYY-MM-DD) as a readable date, e.g. "12 Apr 1985".
 String formatDate(String isoDate) {

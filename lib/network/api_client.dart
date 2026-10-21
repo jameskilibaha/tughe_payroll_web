@@ -24,6 +24,13 @@ class ApiClient {
   final TokenStorage _tokenStorage;
   final http.Client _http;
 
+  /// Notified once whenever a request comes back 401 (missing/expired/
+  /// invalid token), so the app can drop the cached session and send the
+  /// person back to a clean login instead of leaving them stuck on a
+  /// screen that silently fails every request. Set by [ApiService] /
+  /// [AuthController] at startup.
+  void Function()? onUnauthorized;
+
   Uri _uri(String path, [Map<String, dynamic>? query]) {
     final full = path.startsWith('http') ? path : '$baseUrl$path';
     final uri = Uri.parse(full);
@@ -72,6 +79,16 @@ class ApiClient {
         statusCode: response.statusCode);
   }
 
+  /// POST that answers with a file (the server-made PDF payslip): returns the raw bytes.
+  Future<List<int>> postBytes(String path, {Object? body}) async {
+    final response = await _http.post(_uri(path), headers: await _headers(), body: jsonEncode(body ?? {}));
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return response.bodyBytes;
+    }
+    throw ApiException(_extractError(response.body) ?? 'Imeshindwa kutengeneza faili (${response.statusCode})',
+        statusCode: response.statusCode);
+  }
+
   Future<dynamic> _send(Future<http.Response> Function() request) async {
     http.Response response;
     try {
@@ -95,8 +112,12 @@ class ApiClient {
 
     if (statusCode == 401) {
       // Token missing/expired/invalid: clear it so the next screen redirect
-      // sends the user back to a clean login instead of retry-looping.
+      // sends the user back to a clean login instead of retry-looping, and
+      // tell whoever's listening (AuthController) to drop the cached
+      // session too - otherwise the UI keeps showing "logged in" while
+      // every request quietly fails.
       await _tokenStorage.clearToken();
+      onUnauthorized?.call();
     }
 
     final message = _extractError(response.body) ?? 'Hitilafu imetokea (status $statusCode)';

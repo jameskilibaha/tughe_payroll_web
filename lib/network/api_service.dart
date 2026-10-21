@@ -18,6 +18,9 @@ class ApiService {
   final ApiClient _client;
   final TokenStorage tokenStorage;
 
+  /// See [ApiClient.onUnauthorized].
+  set onUnauthorized(void Function() callback) => _client.onUnauthorized = callback;
+
   /// Casts a decoded response body to a JSON object, or throws a clear,
   /// diagnosable [ApiException] instead of letting a raw Dart type-cast
   /// error surface as a generic "imeshindwa kuhifadhi" message. [context]
@@ -114,8 +117,18 @@ class ApiService {
     return _client.getBytes('/api/user/photo/$fileName');
   }
 
-  Future<void> changePassword({required int id, required String password}) async {
-    await _client.put('/api/user/change-password', body: {'id': id, 'password': password});
+  /// Changes a password (own or - with the USER permission - somebody else's). For one's OWN password the
+  /// server hands back a fresh token (the old one may be a "must change your password" one): it is saved here.
+  Future<Map<String, dynamic>> changePassword({required int id, required String password, String? currentPassword}) async {
+    final res = await _client.put('/api/user/change-password', body: {
+      'id': id,
+      'password': password,
+      if (currentPassword != null) 'currentPassword': currentPassword,
+    });
+    final map = res is Map ? Map<String, dynamic>.from(res) : <String, dynamic>{};
+    final token = map['token'] as String?;
+    if (token != null && token.isNotEmpty) await tokenStorage.saveToken(token);
+    return map;
   }
 
   /// `active` mirrors the backend's own convention (0 = active, 1 = blocked);
@@ -129,6 +142,13 @@ class ApiService {
   Future<List<dynamic>> getAllUsers() async {
     final res = await _client.get('/api/user/all');
     return List<dynamic>.from(res as List);
+  }
+
+  /// Gives [userId] a role ("Admin" | "Accountant" | "User"): the server switches every
+  /// permission of that role on and all others off in one step.
+  Future<Map<String, dynamic>> setUserRole({required int userId, required String role}) async {
+    final res = await _client.put('/api/permission/role', body: {'user_id': userId, 'role': role});
+    return _asMap(res, 'setUserRole');
   }
 
   /// The user's real 14-function permission rows (`tughe/permission/model.py`).
@@ -233,15 +253,27 @@ class ApiService {
 
   /// [photoBase64] is a full data URL (e.g. "data:image/jpeg;base64,...").
   /// Returns the resulting `photoFileName` the backend saved it as.
+  final Map<String, Future<List<int>>> _photoCache = {};
+
   Future<Map<String, dynamic>> updateEmployeePhoto({required int employeeId, required String photoBase64}) async {
     final res = await _client.put('/api/employee/photo', body: {'id': employeeId, 'photoBase64': photoBase64});
+    _photoCache.clear(); // a changed photo may reuse the same file name
     return _asMap(res, 'updateEmployeePhoto');
   }
 
   /// Downloads the actual image bytes for a photo previously saved via
   /// [updateEmployeePhoto] (identified by its `photoFileName`).
-  Future<List<int>> fetchEmployeePhotoBytes(String fileName) async {
-    return _client.getBytes('/api/employee/photo/$fileName');
+  Future<List<int>> fetchEmployeePhotoBytes(String fileName) {
+    // Cached per file name (and shared while a download is in flight), so
+    // flipping through table pages never downloads the same photo twice.
+    return _photoCache.putIfAbsent(fileName, () {
+      final future = _client.getBytes('/api/employee/photo/$fileName');
+      future.catchError((_) {
+        _photoCache.remove(fileName); // let a failed download be retried
+        return <int>[];
+      });
+      return future;
+    });
   }
 
   Future<List<dynamic>> searchEmployees({int? id, String? employeeIdNumber, String? mobileNo}) async {
@@ -327,6 +359,7 @@ class ApiService {
     required String allowancesType, // SPECIAL | OTHER
     required double percentOrAmount,
     required bool isForEverOne,
+    bool isTaxable = false,
   }) async {
     final res = await _client.post('/api/allowances', body: {
       'id': id,
@@ -335,6 +368,7 @@ class ApiService {
       'allowancesType': allowancesType,
       'percentOrAmount': percentOrAmount,
       'isForEverOne': isForEverOne,
+      'isTaxable': isTaxable,
     });
     return _asMap(res, 'saveAllowanceSetting');
   }
@@ -368,13 +402,17 @@ class ApiService {
     required double deduction,
     required int employeeId,
     required int arrearsId,
+    bool isDebt = false,
   }) async {
+    // isDebt: `amount` is the TOTAL owed and `deduction` the monthly installment; the
+    // server stops deducting when the debt is fully repaid.
     final res = await _client.post('/api/emp-arrears', body: {
       'id': id,
       'amount': amount,
       'deduction': deduction,
       'employee_id': employeeId,
       'arrears_id': arrearsId,
+      'isDebt': isDebt,
     });
     return _asMap(res, 'saveEmpArrear');
   }
@@ -478,13 +516,16 @@ class ApiService {
     return _asMap(res, 'createAuditLog');
   }
 
-  Future<List<dynamic>> searchAuditLogs() async {
+  /// [limit] = only the newest N entries (an older server ignores it and sends everything);
+  /// null = the whole history (used for the CSV export).
+  Future<List<dynamic>> searchAuditLogs({int? limit}) async {
     final res = await _client.post('/api/audit-tails/search', body: {
       'id': null,
       'tableId': null,
       'tableName': null,
       'actionType': null,
       'user_id': null,
+      'limit': limit,
     });
     return List<dynamic>.from(res as List);
   }
@@ -494,10 +535,52 @@ class ApiService {
   // ---------------------------------------------------------------------
   /// [employeeIds]: real numeric backend employee ids (not employeeIdNumber
   /// strings) - leave null/empty to run for every eligible employee.
-  Future<Map<String, dynamic>> generatePayroll(String monthYear, {List<int>? employeeIds}) async {
+  /// [onceArrears]: the admin's choice for every "Mara Moja" (once) arrear -
+  /// `[{arrearsId, deduct, amount?}]`. A once-arrear is only deducted when it is
+  /// listed here with `deduct: true`; `amount` (TZS) replaces each employee's own value.
+  Future<Map<String, dynamic>> generatePayroll(String monthYear,
+      {List<int>? employeeIds, List<Map<String, dynamic>>? onceArrears}) async {
     final res = await _client.post('/api/payrolls/generate-payroll',
-        body: {'monthYear': monthYear, 'employeeIds': employeeIds});
+        body: {'monthYear': monthYear, 'employeeIds': employeeIds, 'onceArrears': onceArrears});
     return _asMap(res, 'generatePayroll');
+  }
+
+  // -------------------------------------------------------------------
+  // LIVE payroll run: a background job on the server + WebSocket progress
+  // (tughe/payroll/live.py). The same job can also be followed with plain
+  // HTTP polling, which the app uses automatically if the WebSocket drops.
+  // -------------------------------------------------------------------
+
+  /// Starts the run in the background. Returns the job snapshot plus a short-lived
+  /// `ticket` and the `wsPath` of the WebSocket. Asking again for a month that is
+  /// already running returns that same job.
+  Future<Map<String, dynamic>> startPayrollJob(String monthYear,
+      {List<int>? employeeIds, List<Map<String, dynamic>>? onceArrears}) async {
+    final res = await _client.post('/api/payrolls/generate-payroll-live',
+        body: {'monthYear': monthYear, 'employeeIds': employeeIds, 'onceArrears': onceArrears});
+    return _asMap(res, 'startPayrollJob');
+  }
+
+  /// State of a job; with [after] it also returns the events newer than that sequence number.
+  Future<Map<String, dynamic>> payrollJobSnapshot(String jobId, {int after = 0}) async {
+    final res = await _client.get('/api/payrolls/jobs/$jobId', query: {'events': true, 'after': after});
+    return _asMap(res, 'payrollJobSnapshot');
+  }
+
+  /// A fresh WebSocket ticket for an existing job (re-attach after a refresh/reconnect).
+  Future<Map<String, dynamic>> payrollJobTicket(String jobId) async {
+    final res = await _client.get('/api/payrolls/jobs/$jobId/ticket');
+    return _asMap(res, 'payrollJobTicket');
+  }
+
+  Future<void> cancelPayrollJob(String jobId) async {
+    await _client.post('/api/payrolls/jobs/$jobId/cancel');
+  }
+
+  /// `ws://host:port/api/payrolls/ws/<job>?ticket=...` (or wss:// for https).
+  String payrollWebSocketUrl(String wsPath, String ticket) {
+    final base = _client.baseUrl.replaceFirst(RegExp(r'^http'), 'ws');
+    return '$base$wsPath?ticket=${Uri.encodeQueryComponent(ticket)}';
   }
 
   /// Undoes a previous generate-payroll run for [monthYear] - removes every
@@ -514,6 +597,21 @@ class ApiService {
   /// arrears/net pay rows) for one employee/month, produced by a previous
   /// `generatePayroll` run. Empty list means payroll hasn't been run for
   /// that employee/month yet.
+  /// Employees processed in the payroll run of [monthYear] ("YYYY-MM"), each
+  /// with their generated slip rows: [{employee_id, slips: [...]}, ...].
+  Future<List<dynamic>> searchSalarySlipGeneByMonth(String monthYear) async {
+    final res = await _client.post('/api/salary-slip-gene/search-by-month', body: {'monthYear': monthYear});
+    return List<dynamic>.from(res as List);
+  }
+
+  /// Every payroll row of ONE employee over the last [months] processed months
+  /// (null = all), oldest first - feeds the employee dashboard.
+  Future<List<dynamic>> searchSalarySlipHistory({required int employeeId, int? months}) async {
+    final res = await _client.post('/api/salary-slip-gene/search-employee-history',
+        body: {'employee_id': employeeId, 'months': months});
+    return List<dynamic>.from(res as List);
+  }
+
   Future<List<dynamic>> searchSalarySlipGene({required int employeeId, required String monthYear}) async {
     final res = await _client.post('/api/salary-slip-gene/search-by-employee',
         body: {'employee_id': employeeId, 'monthYear': monthYear});
@@ -536,15 +634,170 @@ class ApiService {
     await _client.delete('/api/reports/delete/$fileFull');
   }
 
-  Future<void> generateSalarySlip({required int employeeId, required String monthYear}) async {
-    await _client.post('/api/reports/salary-slip', body: {
+  /// The payslip PDF made by the server. [style]: 'full' = every detail, 'simple' = the short classic slip.
+  Future<List<int>> salarySlipPdf({required int employeeId, required String monthYear, String style = 'full'}) async {
+    return _client.postBytes('/api/reports/salary-slip', body: {
       'employee_id': employeeId,
       'monthYear': monthYear,
       'employeeStatus_id': 0,
+      'style': style,
     });
   }
 
-  Future<void> generateSalarySlipAll(String monthYear) async {
-    await _client.post('/api/reports/salary-slip-all', body: {'monthYear': monthYear});
+  // ---------------------------------------------------------------------
+  // HR: employee records and leave (tughe/hr/router.py, /api/hr)
+  // kind = emergency-contacts | dependents | education | contracts
+  // ---------------------------------------------------------------------
+  Future<List<dynamic>> hrRecords(String kind, int employeeId) async =>
+      List<dynamic>.from(await _client.get('/api/hr/records/$kind', query: {'employee_id': employeeId}) as List);
+
+  Future<Map<String, dynamic>> hrAddRecord(String kind, int employeeId, Map<String, dynamic> body) async =>
+      _asMap(await _client.post('/api/hr/records/$kind?employee_id=$employeeId', body: body), 'hrAddRecord');
+
+  Future<Map<String, dynamic>> hrUpdateRecord(String kind, int id, Map<String, dynamic> body) async =>
+      _asMap(await _client.put('/api/hr/records/$kind/$id', body: body), 'hrUpdateRecord');
+
+  Future<void> hrDeleteRecord(String kind, int id) async {
+    await _client.delete('/api/hr/records/$kind/$id');
   }
+
+  Future<List<dynamic>> hrExpiringContracts({int days = 90}) async =>
+      List<dynamic>.from(await _client.get('/api/hr/contracts/expiring', query: {'days': days}) as List);
+
+  Future<List<dynamic>> hrLeaveTypes({bool all = false}) async =>
+      List<dynamic>.from(await _client.get('/api/hr/leave/types', query: {'all': all}) as List);
+
+  Future<Map<String, dynamic>> hrSaveLeaveType(Map<String, dynamic> body, {int? id}) async => _asMap(
+      id == null ? await _client.post('/api/hr/leave/types', body: body) : await _client.put('/api/hr/leave/types/$id', body: body),
+      'hrSaveLeaveType');
+
+  Future<List<dynamic>> hrLeaveRequests({String? status, int? employeeId, int? year}) async =>
+      List<dynamic>.from(await _client.get('/api/hr/leave/requests', query: {
+        if (status != null) 'status': status,
+        if (employeeId != null) 'employee_id': employeeId,
+        if (year != null) 'year': year,
+      }) as List);
+
+  Future<Map<String, dynamic>> hrRequestLeave(Map<String, dynamic> body) async =>
+      _asMap(await _client.post('/api/hr/leave/requests', body: body), 'hrRequestLeave');
+
+  Future<Map<String, dynamic>> hrDecideLeave(int id, {required bool approve, String? note}) async =>
+      _asMap(await _client.put('/api/hr/leave/requests/$id/decide', body: {'approve': approve, 'note': note}), 'hrDecideLeave');
+
+  Future<Map<String, dynamic>> hrCancelLeave(int id) async =>
+      _asMap(await _client.put('/api/hr/leave/requests/$id/cancel'), 'hrCancelLeave');
+
+  Future<List<dynamic>> hrLeaveBalance(int employeeId, {int? year}) async =>
+      List<dynamic>.from(await _client.get('/api/hr/leave/balance/$employeeId', query: {if (year != null) 'year': year}) as List);
+
+  Future<List<dynamic>> hrOnLeaveToday() async => List<dynamic>.from(await _client.get('/api/hr/leave/today') as List);
+
+  // ---------------------------------------------------------------------
+  // Live chat with the employees (tughe/chat/router.py)
+  // ---------------------------------------------------------------------
+
+  Future<Map<String, dynamic>> chatTicket() async => _asMap(await _client.post('/api/chat/ticket'), 'chatTicket');
+
+  /// `ws://host:port/api/chat/ws?ticket=...` (or wss:// for https).
+  String chatWebSocketUrl(String ticket) {
+    final base = _client.baseUrl.replaceFirst(RegExp(r'^http'), 'ws');
+    return '$base/api/chat/ws?ticket=${Uri.encodeQueryComponent(ticket)}';
+  }
+
+  Future<Map<String, dynamic>> chatThreads({String? q}) async => _asMap(
+      await _client.get('/api/chat/threads', query: {'limit': 500, if (q != null && q.trim().isNotEmpty) 'q': q.trim()}), 'chatThreads');
+
+  Future<Map<String, dynamic>> chatMessages(int employeeId, {int? beforeId, int limit = 50}) async => _asMap(
+      await _client.get('/api/chat/threads/$employeeId/messages', query: {'limit': limit, if (beforeId != null) 'before_id': beforeId}),
+      'chatMessages');
+
+  Future<Map<String, dynamic>> chatSend(int employeeId, String text) async =>
+      _asMap(await _client.post('/api/chat/threads/$employeeId/messages', body: {'text': text}), 'chatSend');
+
+  /// Deletes a message (your own; an Admin: any). The text is wiped, the place stays ("this message was deleted").
+  Future<Map<String, dynamic>> chatDeleteMessage(int messageId) async =>
+      _asMap(await _client.delete('/api/chat/messages/$messageId'), 'chatDeleteMessage');
+
+  Future<Map<String, dynamic>> chatMarkRead(int employeeId, {int? upTo}) async =>
+      _asMap(await _client.post('/api/chat/threads/$employeeId/read', body: {'upTo': upTo}), 'chatMarkRead');
+
+  Future<List<dynamic>> chatFindEmployees(String q) async {
+    final res = _asMap(await _client.get('/api/chat/employees', query: {'q': q}), 'chatFindEmployees');
+    return List<dynamic>.from(res['employees'] as List? ?? const []);
+  }
+
+  // ---------------------------------------------------------------------
+  // Statutory: rates, employee statutory details, pay adjustments, reports (tughe/statutory/router.py)
+  // ---------------------------------------------------------------------
+
+  Future<Map<String, dynamic>> statutorySettings() async => _asMap(await _client.get('/api/statutory/settings'), 'statutorySettings');
+
+  Future<Map<String, dynamic>> saveStatutorySettings(Map<String, dynamic> body) async =>
+      _asMap(await _client.put('/api/statutory/settings', body: body), 'saveStatutorySettings');
+
+  Future<Map<String, dynamic>> confirmStatutorySettings() async =>
+      _asMap(await _client.post('/api/statutory/settings/confirm'), 'confirmStatutorySettings');
+
+  Future<Map<String, dynamic>> statutoryEmployee(int employeeId) async =>
+      _asMap(await _client.get('/api/statutory/employee/$employeeId'), 'statutoryEmployee');
+
+  Future<Map<String, dynamic>> saveStatutoryEmployee(int employeeId, Map<String, dynamic> body) async =>
+      _asMap(await _client.put('/api/statutory/employee/$employeeId', body: body), 'saveStatutoryEmployee');
+
+  Future<List<dynamic>> payAdjustments(String month) async {
+    final res = _asMap(await _client.get('/api/statutory/adjustments', query: {'month': month}), 'payAdjustments');
+    return List<dynamic>.from(res['adjustments'] as List? ?? const []);
+  }
+
+  Future<Map<String, dynamic>> addPayAdjustment(Map<String, dynamic> body) async =>
+      _asMap(await _client.post('/api/statutory/adjustments', body: body), 'addPayAdjustment');
+
+  Future<void> deletePayAdjustment(int id) async {
+    await _client.delete('/api/statutory/adjustments/$id');
+  }
+
+  Future<Map<String, dynamic>> statutoryReport(String month) async =>
+      _asMap(await _client.get('/api/statutory/report', query: {'month': month}), 'statutoryReport');
+
+  // Reports of arrears (deductions + debts), allowances and the debt register (tughe/payreports/router.py)
+  Future<Map<String, dynamic>> arrearsReport(String month, String to) async =>
+      _asMap(await _client.get('/api/pay-reports/arrears', query: {'month': month, 'to': to}), 'arrearsReport');
+
+  Future<Map<String, dynamic>> allowancesReport(String month, String to) async =>
+      _asMap(await _client.get('/api/pay-reports/allowances', query: {'month': month, 'to': to}), 'allowancesReport');
+
+  Future<Map<String, dynamic>> debtsReport() async => _asMap(await _client.get('/api/pay-reports/debts'), 'debtsReport');
+
+  // ---------------------------------------------------------------------
+  // Closing a month, salary history, variance, import, e-mail
+  // ---------------------------------------------------------------------
+
+  Future<Map<String, dynamic>> payrollPeriod(String month) async =>
+      _asMap(await _client.get('/api/payroll-periods/$month'), 'payrollPeriod');
+
+  /// action: submit | return | close | reopen
+  Future<Map<String, dynamic>> payrollPeriodAction(String month, String action, {String? note}) async =>
+      _asMap(await _client.post('/api/payroll-periods/$month/$action', body: {'note': note}), 'payrollPeriodAction');
+
+  Future<List<dynamic>> salaryHistory(int employeeId) async {
+    final res = _asMap(await _client.get('/api/statutory/employee/$employeeId/salary-history'), 'salaryHistory');
+    return List<dynamic>.from(res['history'] as List? ?? const []);
+  }
+
+  Future<Map<String, dynamic>> statutoryVariance(String month) async =>
+      _asMap(await _client.get('/api/statutory/variance', query: {'month': month}), 'statutoryVariance');
+
+  Future<Map<String, dynamic>> importTemplate() async =>
+      _asMap(await _client.get('/api/import/employees/template'), 'importTemplate');
+
+  Future<Map<String, dynamic>> importPreview(String filename, String contentBase64) async => _asMap(
+      await _client.post('/api/import/employees/preview', body: {'filename': filename, 'contentBase64': contentBase64}), 'importPreview');
+
+  Future<Map<String, dynamic>> importApply(String filename, String contentBase64) async => _asMap(
+      await _client.post('/api/import/employees/apply', body: {'filename': filename, 'contentBase64': contentBase64}), 'importApply');
+
+  Future<Map<String, dynamic>> notifyStatus() async => _asMap(await _client.get('/api/notify/status'), 'notifyStatus');
+
+  Future<Map<String, dynamic>> sendPayslips(String month, {List<int>? employeeIds}) async => _asMap(
+      await _client.post('/api/notify/payslips', body: {'monthYear': month, if (employeeIds != null) 'employeeIds': employeeIds}), 'sendPayslips');
 }

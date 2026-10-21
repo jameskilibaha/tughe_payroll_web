@@ -1,47 +1,19 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text;
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 
 import '../controllers/auth_controller.dart';
 import '../core/i18n.dart';
 import '../core/theme.dart';
-import '../models/user.dart';
+import 'widgets/force_password_dialog.dart';
+import '../utils/quick_accounts_store.dart';
+import 'widgets/tughe_logo.dart';
 import '../network/api_exception.dart';
+import '../core/tr_text.dart';
+import '../core/translations.dart';
+import '../core/tr_snack.dart';
 
 const _brandBlue = Color(0xFF1E3A8A);
-
-final List<User> _demoUsers = [
-  const User(
-    id: 'USR-DEMO-1',
-    name: 'Msimamizi wa Mfumo',
-    email: '',
-    role: 'Msimamizi',
-    designation: 'Mkurugenzi wa Mfumo',
-    avatarInitials: 'MS',
-    status: 'Active',
-    username: 'admin',
-  ),
-  const User(
-    id: 'USR-DEMO-2',
-    name: 'Mhasibu Mkuu',
-    email: '',
-    role: 'Mhasibu Mkuu',
-    designation: 'Mhasibu Mkuu wa Mshahara',
-    avatarInitials: 'MH',
-    status: 'Active',
-    username: 'mhasibu',
-  ),
-  const User(
-    id: 'USR-DEMO-3',
-    name: 'Afisa Utumishi',
-    email: '',
-    role: 'Afisa Utumishi',
-    designation: 'Afisa Rasilimali Watu',
-    avatarInitials: 'AU',
-    status: 'Active',
-    username: 'utumishi',
-  ),
-];
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -51,23 +23,33 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _emailCtrl = TextEditingController(text: "aaronsevere@tughe.or.tz");
-  final _passwordCtrl = TextEditingController(text: "SEVERE");
-  String _selectedRole = 'Msimamizi';
+  // Credentials are never pre-filled (they used to be hard-coded in the source).
+
+  // final _emailCtrl = TextEditingController(text: "aaronsevere@tughe.or.tz");
+  // final _passwordCtrl = TextEditingController(text: "SEVERE123456");
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  final _passwordFocus = FocusNode();
+  final _quickStore = QuickAccountsStore();
+  List<QuickAccount> _quick = [];
+  bool _saveQuick = false;
   bool _showPassword = false;
   bool _isLoading = false;
   String _errorMsg = '';
 
-  final _roles = const {
-    'Msimamizi': 'Msimamizi wa Mfumo (Admin)',
-    'Mhasibu Mkuu': 'Mhasibu Mkuu (Chief Accountant)',
-    'Afisa Utumishi': 'Afisa Utumishi (HR Officer)',
-  };
+  @override
+  void initState() {
+    super.initState();
+    _quickStore.load().then((list) {
+      if (mounted) setState(() => _quick = list);
+    });
+  }
 
   @override
   void dispose() {
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
@@ -87,7 +69,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
     try {
-      await Get.find<AuthController>().login(username: username, password: password);
+      final auth = Get.find<AuthController>();
+      var savedPassword = password;
+      if (await auth.login(username: username, password: password)) {
+        // the password was set by somebody else: nothing else is allowed until the person has chosen his own
+        if (!mounted) return;
+        final chosen = await showDialog<String>(context: context, barrierDismissible: false, builder: (_) => ForcePasswordDialog(auth: auth));
+        if (chosen == null) {
+          await auth.cancelPasswordChange();
+          setState(() => _errorMsg = 'Lazima ubadilishe nenosiri ili kuendelea.');
+          return;
+        }
+        savedPassword = chosen;
+      }
+      if (_saveQuick) await _rememberQuickAccount(username, savedPassword);
     } on ApiException catch (error) {
       setState(() => _errorMsg = error.message);
     } catch (error) {
@@ -97,13 +92,205 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  /// Only prefills the username field with a sample account - it does not
-  /// fabricate a session, since only the real backend can authenticate.
-  void _quickLogin(User demoUser) {
-    setState(() {
-      _emailCtrl.text = demoUser.username ?? '';
-      _selectedRole = demoUser.role;
-    });
+  /// Tap on a saved account: with a saved password it signs in at once; otherwise it
+  /// fills the username and puts the cursor in the password box.
+  Future<void> _quickLogin(QuickAccount account) async {
+    _emailCtrl.text = account.username;
+    if (account.hasPassword) {
+      _passwordCtrl.text = account.password!;
+      await _submit();
+    } else {
+      _passwordCtrl.clear();
+      _passwordFocus.requestFocus();
+      setState(() => _errorMsg = '');
+    }
+  }
+
+  Future<void> _rememberQuickAccount(String username, String password) async {
+    final exists = _quick.any((a) => a.username.toLowerCase() == username.toLowerCase());
+    if (exists) return;
+    final updated = [..._quick, QuickAccount(label: username, username: username, password: password)];
+    await _quickStore.save(updated);
+    if (mounted) setState(() => _quick = updated);
+  }
+
+  Future<void> _deleteQuick(QuickAccount account) async {
+    final updated = _quick.where((a) => a.username != account.username).toList();
+    await _quickStore.save(updated);
+    if (mounted) setState(() => _quick = updated);
+  }
+
+  Future<void> _addQuickAccount() async {
+    final labelCtrl = TextEditingController();
+    final userCtrl = TextEditingController();
+    final passCtrl = TextEditingController();
+    var savePassword = false;
+    var show = false;
+    String error = '';
+
+    final created = await showDialog<QuickAccount>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: const Text('Ongeza Akaunti ya Kuingia Haraka'),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: labelCtrl,
+                  decoration: InputDecoration(labelText: tr('Jina la kuonyesha (hiari)'), isDense: true),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: userCtrl,
+                  decoration: InputDecoration(labelText: tr('Jina la Mtumiaji / Barua Pepe (Username)'), isDense: true),
+                ),
+                const SizedBox(height: 4),
+                CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: savePassword,
+                  onChanged: (v) => setLocal(() => savePassword = v ?? false),
+                  title: const Text('Hifadhi nenosiri pia (ingia kwa kubofya mara moja)', style: TextStyle(fontSize: 11.5)),
+                ),
+                if (savePassword) ...[
+                  TextField(
+                    controller: passCtrl,
+                    obscureText: !show,
+                    decoration: InputDecoration(
+                      labelText: tr('Nenosiri (Password)'),
+                      isDense: true,
+                      suffixIcon: IconButton(
+                        icon: Icon(show ? Icons.visibility_off : Icons.visibility, size: 18),
+                        onPressed: () => setLocal(() => show = !show),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Nenosiri litahifadhiwa kwenye kivinjari hiki tu, bila usimbaji fiche. Tumia kompyuta yako binafsi pekee.',
+                    style: TextStyle(fontSize: 10, color: Colors.orange.shade800),
+                  ),
+                ],
+                if (error.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(error, style: const TextStyle(fontSize: 11, color: Colors.red, fontWeight: FontWeight.bold)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Ghairi')),
+            ElevatedButton(
+              onPressed: () {
+                final username = userCtrl.text.trim();
+                if (username.isEmpty) {
+                  setLocal(() => error = 'Weka Jina la Mtumiaji.');
+                  return;
+                }
+                if (savePassword && passCtrl.text.isEmpty) {
+                  setLocal(() => error = 'Weka nenosiri, au ondoa tiki ya "Hifadhi nenosiri".');
+                  return;
+                }
+                Navigator.of(dialogContext).pop(QuickAccount(
+                  label: labelCtrl.text.trim().isEmpty ? username : labelCtrl.text.trim(),
+                  username: username,
+                  password: savePassword ? passCtrl.text : null,
+                ));
+              },
+              child: const Text('Hifadhi'),
+            ),
+          ],
+        ),
+      ),
+    );
+    labelCtrl.dispose();
+    userCtrl.dispose();
+    passCtrl.dispose();
+    if (created == null) return;
+    // the same username replaces the old entry
+    final updated = [..._quick.where((a) => a.username.toLowerCase() != created.username.toLowerCase()), created];
+    await _quickStore.save(updated);
+    if (mounted) setState(() => _quick = updated);
+  }
+
+  Widget _quickSection(bool isEn) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          t('INGIA KWA HARAKA (QUICK LOGIN)', isEnglish: isEn),
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Pal.textMuted, letterSpacing: 0.6),
+        ),
+        const SizedBox(height: 8),
+        if (_quick.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              t('Hakuna akaunti zilizohifadhiwa. Ongeza ili uingie kwa kubofya mara moja.', isEnglish: isEn),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 10.5, color: Pal.textMuted),
+            ),
+          ),
+        ..._quick.map((a) => Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: InkWell(
+                onTap: _isLoading ? null : () => _quickLogin(a),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+                  decoration: BoxDecoration(
+                    color: Pal.surfaceAlt,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Pal.border),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 28, height: 28,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(color: _brandBlue, borderRadius: BorderRadius.circular(8)),
+                        child: Text(a.initials,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(a.label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                            Text('@${a.username}', style: TextStyle(fontSize: 10, color: Pal.textSecondary)),
+                          ],
+                        ),
+                      ),
+                      Tooltip(
+                        message: a.hasPassword ? tr('Inaingia mara moja (nenosiri limehifadhiwa)') : tr('Inajaza jina tu - andika nenosiri'),
+                        child: Icon(a.hasPassword ? Icons.bolt : Icons.person_outline, size: 17, color: Pal.textMuted),
+                      ),
+                      IconButton(
+                        tooltip: tr('Ondoa akaunti hii'),
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(Icons.close, size: 16, color: Pal.textMuted),
+                        onPressed: () => _deleteQuick(a),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )),
+        const SizedBox(height: 2),
+        TextButton.icon(
+          onPressed: _isLoading ? null : _addQuickAccount,
+          icon: const Icon(Icons.add, size: 16),
+          label: const Text('Ongeza Akaunti', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+        ),
+      ],
+    );
   }
 
   @override
@@ -111,7 +298,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final isEn = context.watch<LocaleProvider>().isEnglish;
     final themeProvider = context.watch<ThemeProvider>();
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         children: [
           Positioned(
@@ -123,13 +310,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   tooltip: isEn ? 'Language: English (tap for Kiswahili)' : 'Lugha: Kiswahili (bonyeza kwa English)',
                   onPressed: () => context.read<LocaleProvider>().toggle(),
                   icon: Text(isEn ? 'EN' : 'SW',
-                      style: const TextStyle(color: _brandBlue, fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: Pal.brandText, fontSize: 12, fontWeight: FontWeight.bold)),
                 ),
                 IconButton(
                   tooltip: themeProvider.isDark ? 'Light Mode' : 'Dark Mode',
                   onPressed: () => themeProvider.toggle(),
                   icon: Icon(themeProvider.isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                      size: 18, color: _brandBlue),
+                      size: 18, color: Pal.brandText),
                 ),
               ],
             ),
@@ -141,9 +328,9 @@ class _LoginScreenState extends State<LoginScreen> {
             constraints: const BoxConstraints(maxWidth: 420),
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Pal.surface,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                border: Border.all(color: Pal.border),
                 boxShadow: [
                   BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 24, offset: const Offset(0, 8)),
                 ],
@@ -164,10 +351,10 @@ class _LoginScreenState extends State<LoginScreen> {
                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                         ),
                         const SizedBox(height: 4),
-                        const Text(
+                        Text(
                           'Weka taarifa zako za kazi kuingia kwenye mfumo wa mshahara',
                           textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 11, color: Colors.black54),
+                          style: TextStyle(fontSize: 11, color: Pal.textSecondary),
                         ),
                         const SizedBox(height: 16),
                         if (_errorMsg.isNotEmpty)
@@ -196,16 +383,19 @@ class _LoginScreenState extends State<LoginScreen> {
                         _label('Barua Pepe (Email / Username)'),
                         TextField(
                           controller: _emailCtrl,
-                          decoration: const InputDecoration(
+                          onSubmitted: (_) => _passwordFocus.requestFocus(),
+                          decoration: InputDecoration(
                             prefixIcon: Icon(Icons.mail_outline, size: 18),
-                            hintText: 'mfano: admin',
+                            hintText: tr('mfano: admin'),
                           ),
                         ),
                         const SizedBox(height: 12),
                         _label('Nenosiri (Password)'),
                         TextField(
                           controller: _passwordCtrl,
+                          focusNode: _passwordFocus,
                           obscureText: !_showPassword,
+                          onSubmitted: (_) => _submit(),
                           decoration: InputDecoration(
                             prefixIcon: const Icon(Icons.lock_outline, size: 18),
                             hintText: '••••••••',
@@ -216,24 +406,24 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        _label('Wadhifa / Cheo Mfumoni (Role)'),
-                        DropdownButtonFormField<String>(
-                          value: _selectedRole,
-                          items: _roles.entries
-                              .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 12))))
-                              .toList(),
-                          onChanged: (v) => setState(() => _selectedRole = v ?? _selectedRole),
+                        CheckboxListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          value: _saveQuick,
+                          onChanged: (v) => setState(() => _saveQuick = v ?? false),
+                          title: Text(t('Hifadhi akaunti hii kwa kuingia haraka', isEnglish: isEn), style: const TextStyle(fontSize: 11.5)),
                         ),
                         const SizedBox(height: 8),
                         Align(
                           alignment: Alignment.centerRight,
                           child: TextButton(
-                            onPressed: () => Get.snackbar(
+                            onPressed: () => trSnack(
                               'Umesahau Nenosiri?',
                               'Wasiliana na Msimamizi Mkuu wa Mfumo TUGHE ili kubadilisha nenosiri.',
                             ),
                             child: Text(t('Umesahau Nenosiri?', isEnglish: isEn),
-                                style: const TextStyle(color: _brandBlue, fontWeight: FontWeight.bold, fontSize: 11)),
+                                style: TextStyle(color: Pal.brandText, fontWeight: FontWeight.bold, fontSize: 11)),
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -242,14 +432,12 @@ class _LoginScreenState extends State<LoginScreen> {
                           child: ElevatedButton(
                             onPressed: _isLoading ? null : _submit,
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: _brandBlue,
-                              foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             ),
                             child: _isLoading
-                                ? const SizedBox(
+                                ? SizedBox(
                                     height: 18, width: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Pal.onPrimary))
                                 : Text(t('INGIA MFUMONI (SIGN IN)', isEnglish: isEn),
                                     style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
                           ),
@@ -257,61 +445,18 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 20),
                         const Divider(),
                         const SizedBox(height: 8),
-                        Text(
-                          t('AU INGIA HARAKA KWA AKAUNTI ZA JARIBIO (QUICK DEMO)', isEnglish: isEn),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Colors.black38, letterSpacing: 0.6),
-                        ),
-                        const SizedBox(height: 8),
-                        ..._demoUsers.map((u) => Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: InkWell(
-                                onTap: _isLoading ? null : () => _quickLogin(u),
-                                borderRadius: BorderRadius.circular(12),
-                                child: Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF8FAFC),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: const Color(0xFFE2E8F0)),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        width: 28, height: 28,
-                                        alignment: Alignment.center,
-                                        decoration: BoxDecoration(color: _brandBlue, borderRadius: BorderRadius.circular(8)),
-                                        child: Text(u.avatarInitials,
-                                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(u.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                                            Text('${u.role} (@${u.username})',
-                                                style: const TextStyle(fontSize: 10, color: Colors.black54)),
-                                          ],
-                                        ),
-                                      ),
-                                      const Icon(Icons.check_circle_outline, size: 16, color: Colors.black38),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            )),
+                        _quickSection(isEn),
                       ],
                     ),
                   ),
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 10),
-                    color: const Color(0xFFF8FAFC),
-                    child: const Text(
+                    color: Pal.surfaceAlt,
+                    child: Text(
                       'TUGHE PAYROLL SYSTEM v2.5 • ALL RIGHTS RESERVED © 2026',
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: Colors.black38, letterSpacing: 0.6),
+                      style: TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: Pal.textMuted, letterSpacing: 0.6),
                     ),
                   ),
                 ],
@@ -328,7 +473,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _label(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 4),
         child: Text(text,
-            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.black54, letterSpacing: 0.4)),
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Pal.textSecondary, letterSpacing: 0.4)),
       );
 
   Widget _buildBanner(bool isEn) {
@@ -338,12 +483,7 @@ class _LoginScreenState extends State<LoginScreen> {
       padding: const EdgeInsets.all(24),
       child: Column(
         children: [
-          Container(
-            width: 48, height: 48,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-            child: const Text('T', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 24, color: _brandBlue)),
-          ),
+          const TugheLogo(size: 72, radius: 16),
           const SizedBox(height: 12),
           Text(t('MFUMO WA TUGHE PAYROLL', isEnglish: isEn),
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18, letterSpacing: 0.5)),

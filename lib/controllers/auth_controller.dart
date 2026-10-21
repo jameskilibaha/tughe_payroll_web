@@ -1,5 +1,6 @@
 import 'package:get/get.dart';
 
+import '../models/permission_row.dart';
 import '../models/user.dart';
 import '../network/api_exception.dart';
 import '../network/api_service.dart';
@@ -10,6 +11,7 @@ import 'audit_controller.dart';
 import 'employee_controller.dart';
 import 'salary_terms_controller.dart';
 import 'user_management_controller.dart';
+import '../core/tr_snack.dart';
 
 class AuthController extends GetxController {
   AuthController({PersistenceService? persistence, ApiService? apiService})
@@ -26,10 +28,34 @@ class AuthController extends GetxController {
 
   bool get isLoggedIn => currentUser.value != null;
 
+  /// Admin = may manage users, permissions and the audit log. (Sessions saved by an older
+  /// version carry the old label "Msimamizi"; treat it as Admin until the next login.)
+  bool get isAdmin {
+    final role = currentUser.value?.role ?? '';
+    // An empty/unknown role (older server that does not report roles) is not hidden from anything:
+    // the server still checks every permission.
+    return role == kRoleAdmin || role.startsWith('Msimamizi') || !kAllRoles.contains(role);
+  }
+
+  /// HR officers work with the people, never with the pay.
+  bool get isHr => currentUser.value?.role == kRoleHr;
+
   @override
   void onInit() {
     super.onInit();
+    // Any 401 from the backend (expired/invalid/missing token) should drop
+    // the cached session everywhere, not just clear the stored token -
+    // otherwise the UI keeps showing "logged in" while every request
+    // silently fails. The token itself is already cleared by ApiClient
+    // before this fires.
+    _api.onUnauthorized = _forceLocalLogout;
     _restoreSession();
+  }
+
+  void _forceLocalLogout() {
+    if (currentUser.value == null) return; // already logged out, nothing to do
+    currentUser.value = null;
+    _persistence.remove(_key);
   }
 
   Future<void> _restoreSession() async {
@@ -54,13 +80,49 @@ class AuthController extends GetxController {
   /// authenticated profile. Throws [ApiException] on invalid credentials,
   /// a blocked account, or a connectivity problem - the caller (login
   /// screen) is expected to show `error.message` to the person.
-  Future<void> login({required String username, required String password}) async {
+  ///
+  /// Returns TRUE when the person has to choose a new password first (the password was set by somebody
+  /// else: an Admin's reset, or the initial one). The session is then NOT opened yet: show the
+  /// "choose a new password" dialog and call [completePasswordChange] (or [cancelPasswordChange]).
+  Future<bool> login({required String username, required String password}) async {
     final result = await _api.login(username: username, password: password);
-    final backendUser = Map<String, dynamic>.from(result['user'] as Map);
-    final user = User.fromBackendJson(backendUser);
+    final user = User.fromBackendJson(Map<String, dynamic>.from(result['user'] as Map));
+    if (result['mustChangePassword'] == true) {
+      _pendingUser = user;
+      _pendingPassword = password;
+      return true;
+    }
+    await _openSession(user);
+    return false;
+  }
+
+  User? _pendingUser;
+  String? _pendingPassword;
+
+  Future<void> _openSession(User user) async {
     currentUser.value = user;
     await _persistence.writeJson(_key, user.toJson());
     _refreshEverythingAfterLogin();
+  }
+
+  /// Sets the new password (the server checks the rules and answers with a fresh token), then opens the session.
+  Future<void> completePasswordChange(String newPassword) async {
+    final user = _pendingUser;
+    final current = _pendingPassword;
+    if (user == null || current == null || user.backendId == null) {
+      throw ApiException('Kikao cha kuingia kimekwisha. Ingia tena.');
+    }
+    await _api.changePassword(id: user.backendId!, password: newPassword, currentPassword: current);
+    _pendingUser = null;
+    _pendingPassword = null;
+    await _openSession(user);
+  }
+
+  /// The person gave up choosing a new password: nothing is opened and the token is thrown away.
+  Future<void> cancelPasswordChange() async {
+    _pendingUser = null;
+    _pendingPassword = null;
+    await _api.logout();
   }
 
   /// Every other controller starts fetching as soon as it's created (in
@@ -106,10 +168,10 @@ class AuthController extends GetxController {
   /// Calls the real `PUT /api/user/change-password` for the currently
   /// logged-in user. Silently does nothing if the session hasn't been
   /// synced with a real backend id yet (nothing to update server-side).
-  Future<void> changePassword(String newPassword) async {
+  Future<void> changePassword(String newPassword, {String? currentPassword}) async {
     final backendId = currentUser.value?.backendId;
     if (backendId == null) return;
-    await _api.changePassword(id: backendId, password: newPassword);
+    await _api.changePassword(id: backendId, password: newPassword, currentPassword: currentPassword);
   }
 
   /// Uploads/replaces the logged-in user's own profile picture, shown in
@@ -123,7 +185,7 @@ class AuthController extends GetxController {
       final fileName = result['photoFileName'] as String?;
       await setCurrentUser(user.copyWith(photoFileName: fileName));
     } catch (error) {
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kuhifadhi picha kwenye seva.');
     }
   }

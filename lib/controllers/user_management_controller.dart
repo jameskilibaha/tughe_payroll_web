@@ -6,6 +6,7 @@ import '../models/user.dart';
 import '../network/api_exception.dart';
 import '../network/api_service.dart';
 import '../utils/persistence_service.dart';
+import '../core/tr_snack.dart';
 
 class UserManagementController extends GetxController {
   UserManagementController({PersistenceService? persistence, ApiService? apiService})
@@ -85,7 +86,7 @@ class UserManagementController extends GetxController {
     } catch (error) {
       if (error is ApiException && !error.isNetworkError) {
         errorMessage.value = error.message;
-        Get.snackbar('Imeshindwa kupakua watumiaji', error.message);
+        trSnack('Imeshindwa kupakua watumiaji', error.message);
       }
     } finally {
       _isRefreshing = false;
@@ -138,8 +139,19 @@ class UserManagementController extends GetxController {
       // Revert on failure.
       final revertIndex = systemUsers.indexWhere((x) => x.id == userId);
       if (revertIndex != -1) systemUsers[revertIndex] = u;
-      Get.snackbar('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kubadilisha hali ya mtumiaji.');
+      trSnack('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kubadilisha hali ya mtumiaji.');
     });
+  }
+
+  /// Admin action: sets a new password for ANY user directly on the server
+  /// (PUT /api/user/change-password; needs the UPDATE permission on USER).
+  /// The new password is deliberately not cached locally.
+  Future<void> changeUserPassword(User user, String newPassword) async {
+    final backendId = user.backendId;
+    if (backendId == null) {
+      throw StateError('User ${user.name} has no backend id yet');
+    }
+    await _api.changePassword(id: backendId, password: newPassword);
   }
 
   void updateUser(User updated) {
@@ -168,7 +180,7 @@ class UserManagementController extends GetxController {
         final revertIndex = systemUsers.indexWhere((x) => x.id == updated.id);
         if (revertIndex != -1) systemUsers[revertIndex] = previous;
       }
-      Get.snackbar('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kuhifadhi mabadiliko.');
+      trSnack('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kuhifadhi mabadiliko.');
     });
   }
 
@@ -185,69 +197,169 @@ class UserManagementController extends GetxController {
       // Avoid a forever-spinning cell for this user - record an empty
       // list so the UI stops waiting, while still surfacing the error.
       permissionsByUserId[userId] = const [];
-      Get.snackbar('Imeshindikana',
+      trSnack('Imeshindikana',
           error is ApiException ? error.message : 'Imeshindwa kupakua ruhusa za mtumiaji.');
     }
   }
 
   /// Loads permissions for every currently-known system user with a real
   /// backend id - called once when the Permissions tab first opens.
-  Future<void> loadAllPermissions() async {
-    for (final u in systemUsers) {
+  Future<void> loadAllPermissions({bool onlyStaff = false}) async {
+    for (final u in systemUsers.toList()) {
+      if (onlyStaff && u.role == kRoleUser) continue; // plain Users have no permissions to show
       final id = u.backendId;
       if (id != null) await loadPermissionsFor(id);
     }
   }
 
-  /// Grants or revokes ALL access (insert/update/select/delete/block) for
-  /// one function, for one user - shows a per-cell loading state and
-  /// only updates the UI once the real database write succeeds.
-  Future<void> setFunctionAccess(int userId, String functionName, bool granted) async {
+  /// Grants or revokes ALL access (insert/update/select/delete/block) for one function of one user.
+  Future<bool> setFunctionAccess(int userId, String functionName, bool granted) => setFunctionFlags(
+        userId,
+        functionName,
+        insert: granted,
+        update: granted,
+        select: granted,
+        delete: granted,
+        block: granted,
+      );
+
+  /// Changes some of the 5 action flags of ONE function for ONE user (the ones left null stay as
+  /// they are). The screen only changes once the server has really saved it; on failure nothing
+  /// changes and the reason is shown. Afterwards the user's role label is brought in line with
+  /// the new permissions (the server derives a role from them in the same way).
+  Future<bool> setFunctionFlags(
+    int userId,
+    String functionName, {
+    bool? insert,
+    bool? update,
+    bool? select,
+    bool? delete,
+    bool? block,
+  }) async {
     final key = '$userId:$functionName';
     final rows = permissionsByUserId[userId];
-    if (rows == null) return;
+    if (rows == null) return false;
     final rowIndex = rows.indexWhere((r) => r.functionName == functionName);
-    if (rowIndex == -1) return;
+    if (rowIndex == -1) return false;
     final row = rows[rowIndex];
+    final next = row.copyWith(dataInsert: insert, dataUpdate: update, dataSelect: select, dataDelete: delete, dataBlock: block);
 
     savingPermissionKeys.add(key);
     try {
       await _api.updatePermission(
         id: row.id,
         userId: userId,
-        dataInsert: granted,
-        dataUpdate: granted,
-        dataSelect: granted,
-        dataDelete: granted,
-        dataBlock: granted,
+        dataInsert: next.dataInsert,
+        dataUpdate: next.dataUpdate,
+        dataSelect: next.dataSelect,
+        dataDelete: next.dataDelete,
+        dataBlock: next.dataBlock,
       );
       final updated = List<PermissionRow>.from(rows);
-      updated[rowIndex] = row.copyWith(
-        dataInsert: granted,
-        dataUpdate: granted,
-        dataSelect: granted,
-        dataDelete: granted,
-        dataBlock: granted,
-      );
+      updated[rowIndex] = next;
       permissionsByUserId[userId] = updated;
+      final userIndex = systemUsers.indexWhere((u) => u.backendId == userId);
+      if (userIndex != -1) {
+        systemUsers[userIndex] = systemUsers[userIndex].copyWith(role: roleFromPermissions(updated));
+        unawaited(_persist());
+      }
+      return true;
     } catch (error) {
-      Get.snackbar('Imeshindikana',
-          error is ApiException ? error.message : 'Imeshindwa kusasisha ruhusa kwenye seva.');
+      trSnack('Imeshindikana', error is ApiException ? error.message : 'Imeshindwa kusasisha ruhusa kwenye seva.');
+      return false;
     } finally {
       savingPermissionKeys.remove(key);
     }
   }
 
-  /// Applies a preset role (see [rolePresets] in permission_row.dart) by
-  /// granting/revoking each of the 14 functions accordingly, one at a
-  /// time (each shows its own cell-level loading state).
-  Future<void> applyRolePreset(int userId, String roleKey) async {
-    final allowed = rolePresets[roleKey];
-    if (allowed == null) return;
+  /// The role a set of permissions amounts to (same rule as the server): Admin = may view users AND
+  /// permissions; Accountant = any other permission; User = none.
+  static String roleFromPermissions(List<PermissionRow> rows) {
+    bool canSee(String name) => rows.any((r) => r.functionName == name && r.dataSelect);
+    if (canSee('USER') && canSee('PERMISSION')) return kRoleAdmin;
+    final granted = rows.where((r) => r.functionName != 'LOGIN' && r.hasAnyAccess).map((r) => r.functionName).toSet();
+    // HR: only the people functions (and at least one of the two HR ones) - same rule as the server.
+    if (granted.isNotEmpty &&
+        granted.every(kRoleFunctions[kRoleHr]!.contains) &&
+        (granted.contains('HR_RECORDS') || granted.contains('LEAVE'))) {
+      return kRoleHr;
+    }
+    if (granted.isNotEmpty) return kRoleAccountant;
+    return kRoleUser;
+  }
+
+  /// User ids whose role is being changed right now (to show a spinner).
+  final RxSet<int> changingRole = <int>{}.obs;
+
+  /// Why the last [changeRole] failed (null after a success) - the screen shows it in a dialog.
+  final RxnString lastRoleError = RxnString();
+
+  /// Gives a user the role Admin / Accountant / User. The SERVER switches all the matching
+  /// permissions at once (`PUT /api/permission/role`); if it is an older server without that
+  /// endpoint (404/405) the permissions are given one by one instead. Returns true on success;
+  /// otherwise [lastRoleError] holds the reason.
+  Future<bool> changeRole(int userId, String role, {bool quiet = false}) async {
+    changingRole.add(userId);
+    lastRoleError.value = null;
+    try {
+      var newRole = role;
+      try {
+        final result = await _api.setUserRole(userId: userId, role: role);
+        newRole = (result['role'] as String?) ?? role;
+      } on ApiException catch (error) {
+        // Only a server that really does not know the endpoint ("Not Found" / "Method Not Allowed")
+        // is given the permissions one by one. Any other answer - e.g. "User not found",
+        // "Huwezi kubadilisha role yako mwenyewe" - is a real reason and is shown as it is.
+        final generic = error.message.trim().toLowerCase();
+        final endpointMissing = (error.statusCode == 405) || (error.statusCode == 404 && (generic == 'not found' || generic.isEmpty));
+        if (endpointMissing) {
+          await _applyRoleOneByOne(userId, role);
+        } else {
+          rethrow;
+        }
+      }
+      final index = systemUsers.indexWhere((u) => u.backendId == userId);
+      if (index != -1) {
+        systemUsers[index] = systemUsers[index].copyWith(role: newRole);
+        unawaited(_persist());
+      }
+      permissionsByUserId.remove(userId);
+      unawaited(loadPermissionsFor(userId));
+      if (!quiet) trSnack('Imefanikiwa', 'Role imebadilishwa kuwa ${roleLabel(newRole)}.');
+      return true;
+    } catch (error) {
+      final message = error is ApiException
+          ? '${error.message}${error.statusCode == null ? '' : '  (status ${error.statusCode})'}'
+          : 'Imeshindwa kubadilisha role: $error';
+      lastRoleError.value = message;
+      if (!quiet) trSnack('Imeshindikana', message, duration: const Duration(seconds: 8));
+      return false;
+    } finally {
+      changingRole.remove(userId);
+    }
+  }
+
+  /// Fallback for a server that does not know `PUT /api/permission/role` yet.
+  Future<void> _applyRoleOneByOne(int userId, String role) async {
+    final allowed = kRoleFunctions[role] ?? const <String>{};
+    permissionsByUserId.remove(userId);
+    await loadPermissionsFor(userId);
+    if ((permissionsByUserId[userId] ?? const <PermissionRow>[]).isEmpty) {
+      // Without the user's permission rows nothing can be changed - say so instead of pretending.
+      throw ApiException(
+          'Seva haina njia mpya ya role (PUT /api/permission/role) na ruhusa za mtumiaji huyu hazikupatikana. '
+          'Weka faili mpya za backend (permission/router.py, user/role.py, user/router.py, auth/router.py, user/schema.py, '
+          'permission/schema.py) kisha uanzishe upya server.');
+    }
     for (final fn in systemFunctions) {
       final name = fn['name']!;
       await setFunctionAccess(userId, name, allowed.contains(name));
     }
+  }
+
+  /// Kept for the permissions matrix header: same as [changeRole].
+  Future<void> applyRolePreset(int userId, String roleKey) async {
+    await changeRole(userId, roleKey);
   }
 
   void addUser(User user) {
@@ -274,10 +386,15 @@ class UserManagementController extends GetxController {
       if (index != -1) {
         systemUsers[index] = User.fromBackendJson(created, previous: user);
         unawaited(_persist());
+        // Give the new user the permissions of the chosen role (Admin / Accountant).
+        final newId = (created['id'] as num?)?.toInt();
+        if (newId != null && kAllRoles.contains(user.role) && user.role != kRoleUser) {
+          unawaited(changeRole(newId, user.role, quiet: true));
+        }
       }
     }).catchError((error) {
       systemUsers.removeWhere((u) => u.id == user.id);
-      Get.snackbar('Imeshindikana Kusajili', error is ApiException ? error.message : 'Imeshindwa kusajili mtumiaji.');
+      trSnack('Imeshindikana Kusajili', error is ApiException ? error.message : 'Imeshindwa kusajili mtumiaji.');
     });
   }
 }
